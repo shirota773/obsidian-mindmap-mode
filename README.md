@@ -17,6 +17,12 @@
 >   only the number of branches on the right is stored, per note, next to the fold state in `data.json`.
 >   "Reset left/right placement for this note" goes back to splitting by weight. Undo restores the note
 >   text but not that number.
+> - Relation lines: a link into the same note written in a node's title -- `[[#Heading]]`, or
+>   `[[#^id]]` for a list item ending in ` ^id` -- is drawn as a dashed arrow to that node; an alias
+>   (`[[#Heading|causes]]`) is the arrow's label. On the card the link text and the ` ^id` are hidden
+>   and a small ↗ marks the source. Right-click a node → **Add relation…** picks the target and label
+>   (adding a block id to a list-item target when needed); **Remove relations from here** strips them.
+>   The markdown stays ordinary Obsidian links, so they also work in the editor and in backlinks.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
 >   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
 >   child. It is now written as a heading one level below the parent. "Add child" had the same bug.

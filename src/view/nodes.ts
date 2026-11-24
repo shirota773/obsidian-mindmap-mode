@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { stripInternalLinks, withoutBlockId } from "../model/relations.ts";
 
 import type { LayoutNode } from "../layout/tidyTree.ts";
 import { nextInlineToken } from "../model/inlineText.ts";
@@ -224,7 +225,12 @@ export function buildNodeElement(
 		el.dataset.block = "pre";
 		text.setText(node.text);
 	} else {
-		hasMath = renderInline(text, node.text);
+		// Custom fork: a trailing ` ^id` is a link target, and `[[#...]]` links are
+		// drawn as relation arrows -- neither is shown as title text. The raw
+		// title is still what the editor opens with.
+		const shown = stripInternalLinks(withoutBlockId(node.text), "");
+		if (shown !== withoutBlockId(node.text).trim()) el.addClass("has-relation");
+		hasMath = renderInline(text, shown);
 	}
 
 	// Inside the card, not beside it. `canPan` already lets a pointerdown on

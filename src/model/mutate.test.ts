@@ -18,6 +18,8 @@ import {
 	moveBefore,
 	moveNode,
 	outdentNode,
+	addRelation,
+	removeRelations,
 	removeCheckbox,
 	renameNode,
 	reorderDown,
@@ -759,4 +761,45 @@ test("adding a child to a parent that ends in a heading adds a heading (custom f
 	const re = parse(out.text);
 	assert.equal(find(re, "new").parent, re.root);
 	assert.equal(find(re, "new").kind, "heading");
+});
+
+// --- custom fork: relations -----------------------------------------------------
+
+test("adding a relation to a heading appends a heading link (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1\n\n## B\n");
+	const out = addRelation(p, find(p, "a1"), find(p, "B"), "leads to", "zz");
+	assert.ok(out.ok);
+	assert.ok(lines(out.text).includes("- a1 [[#B|leads to]]"), out.text);
+	assert.equal(serialize(parse(out.text)), out.text);
+});
+
+test("adding a relation to a list item gives it a block id once (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1\n- a2\n");
+	const out = addRelation(p, find(p, "a1"), find(p, "a2"), null, "k3");
+	assert.deepEqual(lines(out.text).slice(4, 6), ["- a1 [[#^k3]]", "- a2 ^k3"]);
+
+	// A second relation to the same item reuses its id.
+	const p2 = parse(out.text);
+	const again = addRelation(p2, find(p2, "A"), find(p2, "a2 ^k3"), null, "other");
+	assert.ok(lines(again.text).includes("## A [[#^k3]]"), again.text);
+});
+
+test("a link goes before the source's own block id (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1 ^own\n- a2 ^t\n");
+	const out = addRelation(p, find(p, "a1 ^own"), find(p, "a2 ^t"), null, "x");
+	assert.ok(lines(out.text).includes("- a1 [[#^t]] ^own"), out.text);
+});
+
+test("a relation to itself, from a virtual root or to an unlinkable heading is refused (custom fork)", () => {
+	const p = parse("# R\n\n## A|B\n\n- a1\n");
+	assert.equal(addRelation(p, find(p, "a1"), find(p, "a1"), null, "x").ok, false);
+	assert.equal(addRelation(p, find(p, "a1"), find(p, "A|B"), null, "x").ok, false);
+	const virtual = parse("- a\n- b\n");
+	assert.equal(addRelation(virtual, virtual.root, find(virtual, "a"), null, "x").ok, false);
+});
+
+test("removing relations strips this note's links and keeps everything else (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1 [[#A|x]] see [[Other]] [[#^b]] ^own\n");
+	const out = removeRelations(p, find(p, "a1 [[#A|x]] see [[Other]] [[#^b]] ^own"));
+	assert.ok(lines(out.text).includes("- a1 see [[Other]] ^own"), out.text);
 });

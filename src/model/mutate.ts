@@ -10,6 +10,7 @@ import {
 } from "./releveling.ts";
 import type { NodeSpec } from "./releveling.ts";
 import { annotationText } from "./annotations.ts";
+import { blockIdOf, isLinkableHeading, stripInternalLinks, withoutBlockId } from "./relations.ts";
 
 export interface Mutation {
 	/** Full document text after the edit. */
@@ -468,4 +469,59 @@ export function replaceBodyRange(
 /** Text of one body range, for display and editing. */
 export function bodyRangeText(parsed: ParsedDoc, range: [number, number]): string {
 	return parsed.doc.lines.slice(range[0], range[1] + 1).join("\n");
+}
+
+// --- custom fork: relations --------------------------------------------------
+
+/** Put `link` into a title, before the title's own block id if it has one. */
+function withLink(text: string, link: string): string {
+	const id = blockIdOf(text);
+	const bare = withoutBlockId(text).trimEnd();
+	return id === null ? `${bare} ${link}` : `${bare} ${link} ^${id}`;
+}
+
+/**
+ * Draw a relation from `from` to `to` by writing a link into `from`'s title:
+ * `[[#Heading|label]]` for a heading, `[[#^id|label]]` for anything else, giving
+ * `to` the block id `newId` when it has none yet. Both edits replace one line
+ * each, so every other line comes back byte-identical.
+ */
+export function addRelation(
+	parsed: ParsedDoc,
+	from: MindNode,
+	to: MindNode,
+	label: string | null,
+	newId: string,
+): Mutation {
+	if (from === to || from.virtual || from.lineStart < 0 || to.virtual || to.lineStart < 0) {
+		return unchanged(parsed);
+	}
+	const alias = label && label.trim() !== "" ? `|${label.trim().replace(/[\]|]/g, "")}` : "";
+
+	let doc = parsed.doc;
+	let link: string;
+	if (isHeadingLike(to)) {
+		const heading = withoutBlockId(to.text).trim();
+		if (!isLinkableHeading(heading)) return unchanged(parsed);
+		link = `[[#${heading}${alias}]]`;
+	} else {
+		const existing = blockIdOf(to.text);
+		const id = existing ?? newId;
+		if (existing === null) {
+			doc = replaceLine(doc, to.lineStart, renderNodeLine(to, `${to.text.trimEnd()} ^${id}`));
+		}
+		link = `[[#^${id}${alias}]]`;
+	}
+	doc = replaceLine(doc, from.lineStart, renderNodeLine(from, withLink(from.text, link)));
+	return done(doc, from.lineStart);
+}
+
+/** Take every relation `node` starts out of its title. */
+export function removeRelations(parsed: ParsedDoc, node: MindNode, noteName = ""): Mutation {
+	if (node.virtual || node.lineStart < 0) return unchanged(parsed);
+	const id = blockIdOf(node.text);
+	const stripped = stripInternalLinks(withoutBlockId(node.text), noteName);
+	const text = id === null ? stripped : `${stripped} ^${id}`;
+	if (text === node.text) return unchanged(parsed);
+	return done(replaceLine(parsed.doc, node.lineStart, renderNodeLine(node, text)), node.lineStart);
 }

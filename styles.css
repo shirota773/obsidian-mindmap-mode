@@ -1016,3 +1016,35 @@ button.is-recording {
 	color: var(--text-warning);
 	font-size: var(--font-ui-smaller);
 }
+
+/* --- custom fork: relation lines ------------------------------------------- */
+
+.mm-relation {
+	stroke: var(--text-accent);
+	stroke-width: 1.5;
+	stroke-dasharray: 6 4;
+	stroke-linecap: round;
+	opacity: 0.85;
+}
+
+.mm-relation-arrow {
+	fill: var(--text-accent);
+}
+
+.mm-relation-label {
+	fill: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	/* A halo in the canvas colour keeps the label readable over lines. */
+	paint-order: stroke;
+	stroke: var(--background-primary);
+	stroke-width: 4px;
+	stroke-linejoin: round;
+}
+
+/* A card that starts a relation, even when the arrow's other end is folded away. */
+.mm-node.has-relation .mm-card::after {
+	content: "↗";
+	margin-left: 4px;
+	color: var(--text-accent);
+	font-size: var(--font-ui-smaller);
+}

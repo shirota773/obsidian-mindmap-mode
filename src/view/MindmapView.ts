@@ -11,6 +11,7 @@ import type {
 import { parseMarkdown } from "../model/parse.ts";
 import { annotationText, bodyCardCount } from "../model/annotations.ts";
 import type { MindNode, ParsedDoc } from "../model/types.ts";
+import { walk } from "../model/types.ts";
 import {
 	addChild,
 	addSibling,
@@ -26,6 +27,8 @@ import {
 	moveAfter,
 	moveBefore,
 	moveNode,
+	addRelation,
+	removeRelations,
 	outdentNode,
 	renameNode,
 	setAnnotation,
@@ -53,7 +56,10 @@ import { clampedMargin, covers, emptyPlan, overlaps, planCull, viewBoxFrom } fro
 import type { CullPlan, ViewBox } from "./culling.ts";
 import { needsRepaint } from "./refresh.ts";
 import { Perf } from "./perf.ts";
-import { createEdgeLayer, renderEdges } from "./edges.ts";
+import { createEdgeLayer, renderEdges, renderRelations } from "./edges.ts";
+import { resolveRelations } from "../model/relations.ts";
+import { RelationLabelModal, RelationTargetModal, breadcrumb } from "./relationDialog.ts";
+import type { Relation } from "../model/relations.ts";
 import { buildNodeElement } from "./nodes.ts";
 import type { NodeElement } from "./nodes.ts";
 import { nodeMaxWidth } from "./nodeWidth.ts";
@@ -273,6 +279,8 @@ export class MindmapView extends TextFileView implements MapController {
 	 * balanced layout, or undefined to split by weight. Saved with the fold state.
 	 */
 	private manualSplit: number | undefined = undefined;
+	/** Custom fork: links between nodes of this note, drawn as dashed arrows. */
+	private relations: Relation[] = [];
 	private elements = new Map<string, NodeElement>();
 	/**
 	 * The card for each entry of `layoutNodes`, at the same index.
@@ -792,6 +800,7 @@ export class MindmapView extends TextFileView implements MapController {
 
 	private render(reason: PaintReason): void {
 		this.parsed = parseMarkdown(this.data, this.parseOptions());
+		this.relations = resolveRelations(this.parsed, this.file?.basename ?? "");
 
 		// Before anything reveals a node: seeding replaces the whole set.
 		if (this.foldSeedPending) {
@@ -1691,6 +1700,10 @@ export class MindmapView extends TextFileView implements MapController {
 			this.plugin.settings.branchColors,
 			view,
 		);
+		if (this.relations.length > 0) {
+			const byId = new Map(this.layoutNodes.map((n) => [n.node.id, n]));
+			renderRelations(this.edgeLayer, this.relations, byId);
+		}
 		this.perf.span("edges", started, { paths, whole: view === null });
 		return paths;
 	}
@@ -2036,6 +2049,45 @@ export class MindmapView extends TextFileView implements MapController {
 		else this.paint("fold");
 	}
 
+	// --- custom fork: relations ---------------------------------------------------
+
+	private noteName(): string {
+		return this.file?.basename ?? "";
+	}
+
+	/** A block id this note does not use yet. */
+	private freshBlockId(): string {
+		for (;;) {
+			const id = Math.random().toString(36).slice(2, 8);
+			if (id.length === 6 && !this.data.includes(`^${id}`)) return id;
+		}
+	}
+
+	addRelationFrom(id: string): void {
+		const parsed = this.parsed;
+		const from = parsed?.byId.get(id);
+		if (!parsed || !from) return;
+		const candidates: MindNode[] = [];
+		walk(parsed.root, (n) => {
+			if (n !== from && !n.virtual && n.lineStart >= 0 && n.kind !== "body") candidates.push(n);
+		});
+		new RelationTargetModal(this.app, candidates, this.noteName(), (to) => {
+			const name = breadcrumb(to, this.noteName()).split(" › ").at(-1) ?? "";
+			new RelationLabelModal(this.app, name, (label) => {
+				// Re-read: the note may have changed while the dialogs were open.
+				const now = this.parsed;
+				const a = now?.byKey.get(from.key);
+				const b = now?.byKey.get(to.key);
+				if (!now || !a || !b) return;
+				this.apply(addRelation(now, a, b, label, this.freshBlockId()));
+			}).open();
+		}).open();
+	}
+
+	removeRelationsFrom(id: string): void {
+		this.withNode(id, (parsed, node) => this.apply(removeRelations(parsed, node, this.noteName())));
+	}
+
 	/** Back to splitting by weight. */
 	resetSides(): void {
 		if (this.manualSplit === undefined) return;
@@ -2161,6 +2213,19 @@ export class MindmapView extends TextFileView implements MapController {
 				.setTitle(node.annotationIndices.length ? "Edit annotation" : "Add annotation")
 				.setIcon("sticky-note")
 				.onClick(() => this.editAnnotation(id)));
+		}
+		// Custom fork: relation lines.
+		if (!node.virtual && node.lineStart >= 0) {
+			menu.addItem((item) => item
+				.setTitle("Add relation…")
+				.setIcon("waypoints")
+				.onClick(() => this.addRelationFrom(id)));
+			if (this.relations.some((r) => r.fromId === id)) {
+				menu.addItem((item) => item
+					.setTitle("Remove relations from here")
+					.setIcon("unlink")
+					.onClick(() => this.removeRelationsFrom(id)));
+			}
 		}
 		// Checking a task never takes its checkbox away -- so removing one lives
 		// here, where adding one does too.
