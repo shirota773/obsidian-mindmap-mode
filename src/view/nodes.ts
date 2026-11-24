@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { setIcon, setTooltip } from "obsidian";
 import { stripInternalLinks, withoutBlockId } from "../model/relations.ts";
 
 import type { LayoutNode } from "../layout/tidyTree.ts";
@@ -138,6 +138,8 @@ export function renderInline(el: HTMLElement, text: string): boolean {
 export interface NodeElementOptions {
 	/** Null means no annotation; an empty string is an explicit blank block. */
 	annotation: string | null;
+	/** Custom fork: show the annotation as a hover tooltip behind an icon. */
+	annotationAsTooltip: boolean;
 	/** Both caps from `nodeMaxWidth`: the node box, and the card's own text. */
 	maxWidth: NodeMaxWidth;
 	branchColors: boolean;
@@ -283,7 +285,18 @@ export function buildNodeElement(
 	// not part of the card. It is an ordinary block, so its width counts
 	// towards the node's `max-content`: a strip wider than the title widens
 	// the node, and the card with it, up to the cap the node carries.
-	if (opts.annotation !== null) {
+	if (opts.annotation !== null && opts.annotationAsTooltip) {
+		// Custom fork: no strip, so the node keeps its plain size; the text lives
+		// in a tooltip on the card and the icon opens the editor.
+		el.addClass("has-annotation-tip");
+		const badge = card.createSpan({ cls: "mm-annotation-badge" });
+		badge.setAttribute("aria-label", "Edit annotation");
+		setIcon(badge, "message-square-text");
+		if (!badge.firstElementChild) badge.setText("💬");
+		setTooltip(card, opts.annotation.trim() === "" ? "(empty annotation)" : opts.annotation, {
+			placement: "top",
+		});
+	} else if (opts.annotation !== null) {
 		el.addClass("has-annotation");
 		const annotation = el.createDiv({ cls: "mm-text mm-annotation" });
 		annotation.setAttribute("aria-label", "Annotation (double-click to edit)");

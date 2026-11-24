@@ -23,6 +23,9 @@
 >   and a small ↗ marks the source. Right-click a node → **Add relation…** picks the target and label
 >   (adding a block id to a list-item target when needed); **Remove relations from here** strips them.
 >   The markdown stays ordinary Obsidian links, so they also work in the editor and in backlinks.
+> - Annotation display: **Under the card** (upstream) or **Tooltip on hover** -- the `: ` lines are
+>   hidden behind a small icon on the card; hover the card to read them, click the icon (tap on
+>   mobile) to edit. Needs **Inline annotations** on.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
 >   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
 >   child. It is now written as a heading one level below the parent. "Add child" had the same bug.

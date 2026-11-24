@@ -1048,3 +1048,23 @@ button.is-recording {
 	color: var(--text-accent);
 	font-size: var(--font-ui-smaller);
 }
+
+/* --- custom fork: annotations as tooltips ---------------------------------- */
+
+.mm-annotation-badge {
+	display: inline-flex;
+	align-items: center;
+	margin-left: 6px;
+	color: var(--text-muted);
+	cursor: pointer;
+	vertical-align: middle;
+}
+
+.mm-annotation-badge:hover {
+	color: var(--text-accent);
+}
+
+.mm-annotation-badge svg {
+	width: 14px;
+	height: 14px;
+}

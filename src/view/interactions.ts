@@ -161,6 +161,15 @@ export function attachInteractions(controller: MapController): () => void {
 			ev.stopPropagation();
 			return;
 		}
+		// Custom fork: the tooltip-mode annotation icon opens the editor -- the
+		// only way to read the annotation where there is no hover (mobile).
+		const badge = target.closest<HTMLElement>(".mm-annotation-badge");
+		if (badge) {
+			const id = nodeIdFrom(badge);
+			if (id) controller.editAnnotation(id);
+			ev.stopPropagation();
+			return;
+		}
 		const checkbox = target.closest<HTMLElement>(".mm-checkbox");
 		if (checkbox) {
 			const id = nodeIdFrom(checkbox);
@@ -367,7 +376,7 @@ export function attachInteractions(controller: MapController): () => void {
 		gate.pointerDown();
 		if (ev.button !== 0 || controller.isEditing()) return;
 		const target = ev.target as HTMLElement;
-		if (target.closest(".mm-tools, .mm-checkbox")) return;
+		if (target.closest(".mm-tools, .mm-checkbox, .mm-annotation-badge")) return;
 		const card = target.closest<HTMLElement>(".mm-card");
 		// A body card stands for lines the note owns, not a node that can be
 		// reparented, so it never starts a drag.

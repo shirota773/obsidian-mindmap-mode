@@ -1171,9 +1171,12 @@ export class MindmapView extends TextFileView implements MapController {
 			const collapsed = this.collapsedKeys.has(node.key);
 			const isBody = node.kind === "body";
 			const hasAnnotation = node.annotationIndices.length > 0;
+			const asTooltip = s.annotationDisplay === "tooltip";
 			const element = buildNodeElement(this.nodeLayer, layout, {
 				annotation: hasAnnotation ? annotationText(parsed, node) : null,
-				maxWidth: nodeMaxWidth(node.kind, hasAnnotation, s.maxNodeWidth),
+				annotationAsTooltip: asTooltip,
+				// A tooltip takes no room, so the card is sized as if it had none.
+				maxWidth: nodeMaxWidth(node.kind, hasAnnotation && !asTooltip, s.maxNodeWidth),
 				branchColors: s.branchColors,
 				preformatted: isBody && looksPreformatted(node.text),
 				expandable: isBody,

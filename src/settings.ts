@@ -41,6 +41,8 @@ export interface MindmapSettings {
 	branchColors: boolean;
 	showBodyNodes: boolean;
 	inlineAnnotations: boolean;
+	/** Custom fork: draw annotations as a strip under the card, or as a hover tooltip. */
+	annotationDisplay: "inline" | "tooltip";
 	maxNodeWidth: number;
 	horizontalGap: number;
 	verticalGap: number;
@@ -69,6 +71,7 @@ export const DEFAULT_SETTINGS: MindmapSettings = {
 	branchColors: true,
 	showBodyNodes: true,
 	inlineAnnotations: true,
+	annotationDisplay: "inline",
 	maxNodeWidth: 340,
 	horizontalGap: 64,
 	verticalGap: 14,
@@ -242,6 +245,15 @@ const GROUPS: SettingGroup[] = [
 				name: "Inline annotations",
 				desc: annotationDesc,
 				control: { type: "toggle", key: "inlineAnnotations" },
+			},
+			{
+				name: "Annotation display",
+				desc: "Under the card keeps the text visible. Tooltip hides it behind a small icon: hover the card to read it, click the icon to edit it (on mobile, tap the icon).",
+				control: {
+					type: "dropdown",
+					key: "annotationDisplay",
+					options: { inline: "Under the card", tooltip: "Tooltip on hover" },
+				},
 			},
 			{
 				name: "Maximum card width",
