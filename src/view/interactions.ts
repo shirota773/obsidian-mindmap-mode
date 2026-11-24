@@ -2,14 +2,17 @@ import type { Canvas } from "./canvas.ts";
 import { ClickGate, opensEditor } from "./clickIntent.ts";
 import { comboFromEvent, resolveAction } from "./shortcuts.ts";
 import type { ShortcutBindings } from "./shortcuts.ts";
+import { nearestInGap, zoneOfCard } from "./dropTarget.ts";
+import type { CardBox, DropMode } from "./dropTarget.ts";
 
 export type Direction = "up" | "down" | "left" | "right";
 
 /**
  * Where a dragged node lands relative to the card it was dropped on: inside it
- * as a child, or beside it as a sibling above or below.
+ * as a child, beside it as a sibling above or below, or (on the root) first
+ * among its children.
  */
-export type DropMode = "child" | "before" | "after";
+export type { DropMode };
 
 /** Everything the interaction layer needs from the view. */
 export interface MapController {
@@ -199,7 +202,7 @@ export function attachInteractions(controller: MapController): () => void {
 	};
 
 	/**
-	 * Which third of the card the pointer is over.
+	 * A node's card as a screen-space box.
 	 *
 	 * A rect is the right tool here -- this is hit-testing in screen space, where
 	 * the pointer already lives, not measuring a card for layout.
@@ -209,20 +212,15 @@ export function attachInteractions(controller: MapController): () => void {
 	 * off the node, the "after" band would sit at the bottom of the strip while
 	 * the line marking it was drawn along the bottom of the card.
 	 */
-	const zoneOf = (node: HTMLElement, clientY: number): DropMode => {
+	const boxOf = (node: HTMLElement, id: string): CardBox => {
 		const el = node.querySelector<HTMLElement>(".mm-card") ?? node;
 		const rect = el.getBoundingClientRect();
-		const edge = Math.min(rect.height * 0.3, 14);
-		if (clientY < rect.top + edge) return "before";
-		if (clientY > rect.bottom - edge) return "after";
-		return "child";
+		return { id, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
 	};
 
 	/**
 	 * The zone under the pointer, falling back to "child" where reordering is
-	 * refused. That fallback is what keeps a first-level card behaving exactly as
-	 * it always has over its whole surface, rather than growing a silent dead
-	 * band along each edge.
+	 * refused, so a card never grows a silent dead band along its edges.
 	 */
 	const dropModeFor = (
 		id: string,
@@ -230,9 +228,48 @@ export function attachInteractions(controller: MapController): () => void {
 		el: HTMLElement,
 		clientY: number,
 	): DropMode => {
-		const zone = zoneOf(el, clientY);
+		const zone = zoneOfCard(boxOf(el, targetId), clientY, el.dataset.kind === "root");
 		if (zone !== "child" && !controller.canDrop(id, targetId, zone)) return "child";
 		return zone;
+	};
+
+	interface DropHit {
+		el: HTMLElement;
+		id: string;
+		mode: DropMode;
+	}
+
+	/**
+	 * Custom fork: what a drop at this point would do.
+	 *
+	 * On a card it is that card's zone. In the gap between cards -- where
+	 * upstream found nothing at all -- it is "before" / "after" the nearest card
+	 * spanning the pointer, which turns the whole gap between two siblings into a
+	 * reorder target instead of the few pixels at each card's edge.
+	 */
+	const hitTest = (dragged: string, x: number, y: number): DropHit | null => {
+		const under = document.elementFromPoint(x, y);
+		const onCard = under instanceof HTMLElement ? under.closest<HTMLElement>(".mm-node") : null;
+		const onCardId = onCard?.dataset.id;
+		if (onCard && onCardId) {
+			if (onCardId === dragged) return null;
+			return { el: onCard, id: onCardId, mode: dropModeFor(dragged, onCardId, onCard, y) };
+		}
+
+		const nodes = new Map<string, HTMLElement>();
+		const boxes: CardBox[] = [];
+		viewport
+			.querySelectorAll<HTMLElement>('.mm-node:not([data-kind="body"]):not([data-kind="root"])')
+			.forEach((el) => {
+				const id = el.dataset.id;
+				if (!id) return;
+				nodes.set(id, el);
+				boxes.push(boxOf(el, id));
+			});
+		const gap = nearestInGap(boxes, x, y, dragged);
+		const el = gap ? nodes.get(gap.id) : undefined;
+		if (!gap || !el || !controller.canDrop(dragged, gap.id, gap.mode)) return null;
+		return { el, id: gap.id, mode: gap.mode };
 	};
 
 	// Where the pointer was when this frame was asked for, and the handle that
@@ -253,26 +290,21 @@ export function attachInteractions(controller: MapController): () => void {
 	const resolveDrop = (): void => {
 		if (dragId === null || !dragging) return;
 		// Pointer capture makes ev.target useless, so hit-test by coordinates.
-		const under = document.elementFromPoint(dropAt.x, dropAt.y);
-		const targetEl =
-			under instanceof HTMLElement ? under.closest<HTMLElement>(".mm-node") : null;
-
-		const targetId = targetEl?.dataset.id;
-		const mode =
-			targetEl && targetId && targetId !== dragId
-				? dropModeFor(dragId, targetId, targetEl, dropAt.y)
-				: "child";
+		const hit = hitTest(dragId, dropAt.x, dropAt.y);
+		const targetEl = hit?.el ?? null;
+		const mode = hit?.mode ?? "child";
 		// The zone can change without the card changing, and the highlight has to
 		// follow the pointer across that boundary.
 		if (targetEl === hovered && mode === hoveredMode) return;
 		clearHover();
-		if (!targetEl || !targetId || targetId === dragId) return;
+		if (!hit) return;
 
-		hovered = targetEl;
+		hovered = hit.el;
 		hoveredMode = mode;
-		if (!controller.canDrop(dragId, targetId, mode)) targetEl.addClass("is-drop-invalid");
-		else if (mode === "child") targetEl.addClass("is-drop-target");
-		else targetEl.addClass(mode === "before" ? "is-drop-before" : "is-drop-after");
+		if (!controller.canDrop(dragId, hit.id, mode)) hit.el.addClass("is-drop-invalid");
+		else if (mode === "child") hit.el.addClass("is-drop-target");
+		// "first-child" draws the line above the root: the node goes in at the top.
+		else hit.el.addClass(mode === "after" ? "is-drop-after" : "is-drop-before");
 	};
 
 	const endDrag = (): void => {
@@ -335,18 +367,12 @@ export function attachInteractions(controller: MapController): () => void {
 		if (dragId === null || ev.pointerId !== dragPointer) return;
 		if (dragging) {
 			gate.dragEnded();
-			const under = document.elementFromPoint(ev.clientX, ev.clientY);
-			const targetEl =
-				under instanceof HTMLElement ? under.closest<HTMLElement>(".mm-node") : null;
-			const targetId = targetEl?.dataset.id;
-			if (targetEl && targetId && targetId !== dragId) {
-				const mode = dropModeFor(dragId, targetId, targetEl, ev.clientY);
-				if (controller.canDrop(dragId, targetId, mode)) {
-					const source = dragId;
-					endDrag();
-					controller.move(source, targetId, mode);
-					return;
-				}
+			const hit = hitTest(dragId, ev.clientX, ev.clientY);
+			if (hit && controller.canDrop(dragId, hit.id, hit.mode)) {
+				const source = dragId;
+				endDrag();
+				controller.move(source, hit.id, hit.mode);
+				return;
 			}
 		}
 		endDrag();

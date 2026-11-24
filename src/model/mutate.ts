@@ -322,14 +322,16 @@ export function moveNode(
 /**
  * Whether `node` may be dropped beside `target` as one of its siblings.
  *
- * First-level branches are excluded on purpose: the layout splits them between
- * the two sides of the root by weight, so their order is the layout's to decide
- * and dragging one above another would say nothing about where it lands.
+ * Custom fork: first-level branches are included. Upstream excluded them
+ * because the balanced layout picks each branch's side by weight, but the
+ * layout keeps the note's order as the reading order (down the right, then the
+ * left), so the order is still the user's to set -- and in the single-side
+ * layout it is exactly what the map shows.
  */
 export function canReorder(node: MindNode, target: MindNode): boolean {
 	const parent = target.parent;
-	// No parent: the root. No grandparent: a first-level branch.
-	if (!parent || !parent.parent) return false;
+	// No parent: the root, which has no siblings.
+	if (!parent) return false;
 	if (target.virtual || target.lineStart < 0) return false;
 	if (node === target) return false;
 	return canMove(node, parent);
@@ -385,9 +387,7 @@ function siblingAt(node: MindNode, offset: number): MindNode | null {
 /**
  * Whether `node` can swap places with the sibling above / below it.
  *
- * False at either end of a run, and false for a first-level branch whatever its
- * position: `canReorder` leaves that order to the layout, so there is no "up"
- * for one of them to move to.
+ * False at either end of a run and for the root, which has no siblings.
  */
 export function canReorderUp(node: MindNode): boolean {
 	const previous = siblingAt(node, -1);

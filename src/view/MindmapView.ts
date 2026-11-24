@@ -1958,6 +1958,13 @@ export class MindmapView extends TextFileView implements MapController {
 		const node = this.parsed?.byId.get(id);
 		const target = this.parsed?.byId.get(targetId);
 		if (!node || !target) return false;
+		if (mode === "first-child") {
+			// Custom fork: "first among target's children" is "before its first
+			// child"; with no children yet it is simply "child".
+			const first = target.children[0];
+			if (!first) return canMove(node, target);
+			return first !== node && canReorder(node, first);
+		}
 		return mode === "child" ? canMove(node, target) : canReorder(node, target);
 	}
 
@@ -1967,6 +1974,12 @@ export class MindmapView extends TextFileView implements MapController {
 		const target = parsed?.byId.get(targetId);
 		if (!parsed || !node || !target) return;
 
+		if (mode === "first-child") {
+			const first = target.children[0];
+			this.collapsedKeys.delete(target.key);
+			this.apply(first ? moveBefore(parsed, node, first) : moveNode(parsed, node, target));
+			return;
+		}
 		if (mode === "child") {
 			this.collapsedKeys.delete(target.key);
 			this.apply(moveNode(parsed, node, target));

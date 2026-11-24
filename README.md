@@ -1,5 +1,19 @@
 # Mindmap Mode
 
+> **Personal fork** of [PHANTOM-Nw/obsidian-mindmap-mode](https://github.com/PHANTOM-Nw/obsidian-mindmap-mode),
+> installed under the id `mindmap-mode-custom` so Obsidian never "updates" it back to upstream.
+> Disable the upstream plugin while this one is enabled: both register the `mindmap-mode-view` view.
+>
+> Changes from upstream 1.1.2 (see [upstream issue #14](https://github.com/PHANTOM-Nw/obsidian-mindmap-mode/issues/14)):
+>
+> - First-level branches can be reordered too, by drag and by `Mod+ArrowUp/Down`. The note order is the
+>   map's reading order in both layouts.
+> - Dropping in the gap between two cards places the node before / after the nearest card, instead of
+>   only the 7–14px band at each card's edge.
+> - Dropping on the root's top half puts the node first among its children; the bottom half still appends.
+>
+> The drop geometry lives in `src/view/dropTarget.ts` (pure, unit-tested).
+
 *[中文说明](README.zh.md)*
 
 Turn any Obsidian note into an editable, radial mind map — the same way you

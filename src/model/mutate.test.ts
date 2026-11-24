@@ -373,20 +373,24 @@ test("reordering headings keeps their blank-line padding", () => {
 	assert.equal(out.text, "# R\n\n## H\n\n### B\n\ntext B\n\n### A\n\ntext A\n");
 });
 
-test("first-level branches are never reordered", () => {
+test("first-level branches can be reordered (custom fork)", () => {
 	const p = parse();
 	const alpha = find(p, "Alpha");
 	const beta = find(p, "Beta");
 	const two = find(p, "two");
 
-	// Alpha and Beta hang off the root, where the layout owns the order.
-	assert.equal(canReorder(beta, alpha), false);
-	assert.equal(canReorder(two, alpha), false);
-	assert.equal(moveBefore(p, beta, alpha).ok, false);
-	assert.equal(moveAfter(p, beta, alpha).ok, false);
+	// The note order is the map's reading order -- down the right, then the
+	// left -- so the user owns it, not the layout.
+	assert.equal(canReorder(beta, alpha), true);
+	assert.equal(canReorder(two, alpha), true);
+
+	const out = moveBefore(p, beta, alpha);
+	assert.ok(out.ok);
+	assert.ok(out.text.indexOf("## Beta") < out.text.indexOf("## Alpha"));
+	assert.equal(serialize(parse(out.text)), out.text);
+
 	// The root has no siblings at all.
 	assert.equal(canReorder(alpha, p.root), false);
-	// Reparenting a first-level branch is still allowed.
 	assert.equal(canMove(beta, alpha), true);
 });
 
@@ -472,13 +476,19 @@ test("a move and its opposite leave a CRLF file byte for byte as it was", () => 
 	}
 });
 
-test("first-level branches cannot be moved up or down", () => {
+test("first-level branches move up and down like any sibling (custom fork)", () => {
 	const p = parse();
-	// The layout owns their order, so dragging cannot reorder them either.
-	assert.equal(canReorderUp(find(p, "Beta")), false);
-	assert.equal(canReorderDown(find(p, "Alpha")), false);
-	assert.equal(reorderUp(p, find(p, "Beta")).ok, false);
-	assert.equal(reorderDown(p, find(p, "Alpha")).ok, false);
+	assert.equal(canReorderUp(find(p, "Beta")), true);
+	assert.equal(canReorderDown(find(p, "Alpha")), true);
+
+	const up = reorderUp(p, find(p, "Beta"));
+	assert.ok(up.ok);
+	assert.ok(up.text.indexOf("## Beta") < up.text.indexOf("## Alpha"));
+	assert.equal(reorderDown(p, find(p, "Alpha")).text, up.text);
+
+	// The ends of the run and the root still have nowhere to go.
+	assert.equal(canReorderUp(find(p, "Alpha")), false);
+	assert.equal(canReorderDown(find(p, "Beta")), false);
 	assert.equal(canReorderUp(p.root), false);
 	assert.equal(canReorderDown(p.root), false);
 });

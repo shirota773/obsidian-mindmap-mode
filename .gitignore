@@ -18,3 +18,6 @@ test-vault/.obsidian/workspace.json
 test-vault/.obsidian/workspace-mobile.json
 test-vault/.obsidian/plugins/
 test-vault/.trash/
+
+# Custom fork: plugin settings written when this checkout is symlinked into a vault
+data.json
