@@ -5,9 +5,43 @@
  * then the left side top to bottom -- so any arrangement is fully described by
  * that order plus one number: how many branches sit on the right (the split).
  * Moving a branch is therefore "reorder the note, then store the new split".
+ * The split is stored as a `SideSplit` -- which branch starts the left side --
+ * so it keeps meaning the same thing when branches come and go.
  *
  * Pure, so it is tested without Obsidian or a DOM.
  */
+import type { SideSplit } from "../foldStore.ts";
+
+/** The split `right` describes, over the top-level branch keys in note order. */
+export function encodeSplit(root: string, keys: readonly string[], right: number): SideSplit {
+	const at = Math.max(0, Math.min(Math.floor(right), keys.length));
+	return { root, firstLeft: keys[at] ?? null, right: at, total: keys.length };
+}
+
+/**
+ * How many of `keys` go on the right under `saved`, or undefined to split by
+ * weight.
+ *
+ * The first left branch is followed wherever it now is, so adding, removing or
+ * reordering branches keeps the sides as the user left them. When that branch
+ * is gone, the saved count still applies if only names changed (same root, same
+ * number of branches); anything bigger -- a new root, branches added and
+ * renamed at once -- is a different map, and a stale count would scatter it.
+ */
+export function resolveSplit(
+	root: string,
+	keys: readonly string[],
+	saved: SideSplit | undefined,
+): number | undefined {
+	if (!saved) return undefined;
+	if (saved.firstLeft !== null) {
+		const at = keys.indexOf(saved.firstLeft);
+		if (at >= 0) return at;
+	}
+	if (saved.root !== root) return undefined;
+	if (saved.firstLeft === null) return keys.length;
+	return saved.total === keys.length ? Math.min(saved.right, keys.length) : undefined;
+}
 
 export type SideSign = 1 | -1;
 

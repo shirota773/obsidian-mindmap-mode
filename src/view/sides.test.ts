@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { placeOnSide, sideSlot } from "./sides.ts";
+import { encodeSplit, placeOnSide, resolveSplit, sideSlot } from "./sides.ts";
 import type { SideCard } from "./sides.ts";
 
 describe("placeOnSide", () => {
@@ -91,5 +91,41 @@ describe("sideSlot", () => {
 
 	test("a pointer over the root itself is not a slot", () => {
 		assert.equal(sideSlot(root, cards, 440, 320), null);
+	});
+});
+
+describe("resolveSplit / encodeSplit", () => {
+	const keys = ["/h:a", "/h:b", "/h:c", "/h:d"];
+	const saved = encodeSplit("テーマ", keys, 3); // a b c | d
+
+	test("records the first left branch, the count and the total", () => {
+		assert.deepEqual(saved, { root: "テーマ", firstLeft: "/h:d", right: 3, total: 4 });
+		assert.deepEqual(encodeSplit("テーマ", keys, 4).firstLeft, null);
+	});
+
+	test("nothing saved means split by weight", () => {
+		assert.equal(resolveSplit("テーマ", keys, undefined), undefined);
+	});
+
+	test("follows the first left branch when branches are added or removed", () => {
+		assert.equal(resolveSplit("テーマ", ["/h:a", "/h:b", "/h:c", "/h:d", "/h:e"], saved), 3);
+		assert.equal(resolveSplit("テーマ", ["/h:x", "/h:a", "/h:b", "/h:c", "/h:d"], saved), 4);
+		assert.equal(resolveSplit("テーマ", ["/h:a", "/h:c", "/h:d"], saved), 2);
+	});
+
+	test("falls back to the count when only a name changed", () => {
+		assert.equal(resolveSplit("テーマ", ["/h:a", "/h:b", "/h:c", "/h:D2"], saved), 3);
+	});
+
+	test("splits by weight when the branches changed beyond recognition", () => {
+		// A second H1 turns the file name into the root: two new branches.
+		assert.equal(resolveSplit("(file)", ["/h:テーマ", "/h:テーマ2"], saved), undefined);
+		assert.equal(resolveSplit("テーマ", ["/h:a", "/h:b"], saved), undefined);
+	});
+
+	test("all on the right stays all on the right under the same root only", () => {
+		const allRight = encodeSplit("テーマ", keys, 4);
+		assert.equal(resolveSplit("テーマ", [...keys, "/h:e"], allRight), 5);
+		assert.equal(resolveSplit("(file)", ["/h:テーマ", "/h:テーマ2"], allRight), undefined);
 	});
 });

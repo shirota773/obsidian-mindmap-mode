@@ -165,15 +165,24 @@ test("renaming a folder holding nothing remembered changes nothing", () => {
 
 // --- custom fork: the manual left/right split --------------------------------
 
+const SPLIT = { root: "テーマ", firstLeft: "/h:asdfad", right: 4, total: 5 };
+
 test("a manual split is stored and read back (custom fork)", () => {
-	const store = putNoteState({}, "a.md", { collapsed: [], split: 2 }, 1);
-	assert.equal(store["a.md"].split, 2);
-	assert.deepEqual(readStore(store), store);
+	const store = putNoteState({}, "a.md", { collapsed: [], split: SPLIT }, 1);
+	assert.deepEqual(store["a.md"].split, SPLIT);
+	assert.deepEqual(readStore(JSON.parse(JSON.stringify(store)))["a.md"].split, SPLIT);
 });
 
-test("a split that is not a whole number >= 0 is dropped on read (custom fork)", () => {
-	for (const split of [-1, 1.5, "2", null]) {
+test("a split with nothing on the left keeps firstLeft null (custom fork)", () => {
+	const allRight = { ...SPLIT, firstLeft: null, right: 5 };
+	const read = readStore({ "a.md": { collapsed: [], at: 1, split: allRight } });
+	assert.deepEqual(read["a.md"].split, allRight);
+});
+
+test("a malformed or old numeric split is dropped on read (custom fork)", () => {
+	for (const split of [2, -1, "2", null, { ...SPLIT, right: 1.5 }, { ...SPLIT, total: -1 },
+		{ ...SPLIT, root: 3 }, { ...SPLIT, firstLeft: 7 }, { firstLeft: "x", right: 1, total: 2 }]) {
 		const read = readStore({ "a.md": { collapsed: [], at: 1, split } });
-		assert.equal(read["a.md"].split, undefined, `split ${String(split)} survived`);
+		assert.equal(read["a.md"].split, undefined, `split ${JSON.stringify(split)} survived`);
 	}
 });

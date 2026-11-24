@@ -12,6 +12,22 @@
  * state lives in the plugin's own `data.json` and leaves the markdown alone.
  */
 
+/**
+ * Custom fork: a manual left/right placement, tied to the branches it was made
+ * on rather than to a bare count -- a count outlives the structure it described
+ * (add a second H1 and "4 on the right" lands on a different set of branches).
+ */
+export interface SideSplit {
+	/** What the root was: its title, or "(file)" for a file-name root. */
+	root: string;
+	/** Key of the first branch on the left; null when the left side is empty. */
+	firstLeft: string | null;
+	/** How many top-level branches were on the right. */
+	right: number;
+	/** How many top-level branches there were in all. */
+	total: number;
+}
+
 /** One note's view state, as it sits in `data.json`. */
 export interface NoteViewState {
 	/**
@@ -31,10 +47,10 @@ export interface NoteViewState {
 	 */
 	focusId?: string;
 	/**
-	 * Custom fork: how many top-level branches sit on the right in balanced
-	 * layout, once the user has dragged one across the root. Absent: by weight.
+	 * Custom fork: where the top-level branches split between the sides in
+	 * balanced layout, once the user has dragged one across. Absent: by weight.
 	 */
-	split?: number;
+	split?: SideSplit;
 	/** Last touched, in ms. Only ever compared, never shown. */
 	at: number;
 }
@@ -69,12 +85,23 @@ function readEntry(value: unknown): NoteViewState | null {
 	};
 	if (typeof value.focusKey === "string") state.focusKey = value.focusKey;
 	if (typeof value.focusId === "string") state.focusId = value.focusId;
-	if (isSplit(value.split)) state.split = value.split;
+	if (isSplit(value.split)) state.split = { ...value.split };
 	return state;
 }
 
-function isSplit(value: unknown): value is number {
+function isCount(value: unknown): value is number {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/** An old bare-number split is not one: it is exactly what this replaced. */
+function isSplit(value: unknown): value is SideSplit {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.root === "string" &&
+		(value.firstLeft === null || typeof value.firstLeft === "string") &&
+		isCount(value.right) &&
+		isCount(value.total)
+	);
 }
 
 /**
@@ -126,7 +153,7 @@ export function putNoteState(
 	const state: NoteViewState = { collapsed: [...entry.collapsed], at: now };
 	if (entry.focusKey !== undefined) state.focusKey = entry.focusKey;
 	if (entry.focusId !== undefined) state.focusId = entry.focusId;
-	if (entry.split !== undefined && isSplit(entry.split)) state.split = entry.split;
+	if (entry.split !== undefined && isSplit(entry.split)) state.split = { ...entry.split };
 	return prune({ ...store, [path]: state });
 }
 

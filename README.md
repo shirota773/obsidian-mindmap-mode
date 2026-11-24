@@ -14,9 +14,11 @@
 > - Free left/right placement in the balanced layout: drag a top-level branch to the other side of the
 >   root (onto a card, into a gap, or into open canvas in the first-level column) and it stays there.
 >   The note order is still the reading order (right side top to bottom, then left side top to bottom);
->   only the number of branches on the right is stored, per note, next to the fold state in `data.json`.
+>   the placement is stored per note next to the fold state in `data.json`, as "which branch starts the
+>   left side" -- so adding or removing branches keeps it, and a different map (say, a second H1 turning
+>   the file name into the root) falls back to splitting by weight instead of reusing a stale count.
 >   "Reset left/right placement for this note" goes back to splitting by weight. Undo restores the note
->   text but not that number.
+>   text but not the placement.
 > - Relation lines: a link into the same note written in a node's title -- `[[#Heading]]`, or
 >   `[[#^id]]` for a list item ending in ` ^id` -- is drawn as a dashed arrow to that node; an alias
 >   (`[[#Heading|causes]]`) is the arrow's label. On the card the link text and the ` ^id` are hidden

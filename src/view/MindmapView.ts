@@ -64,7 +64,8 @@ import { buildNodeElement } from "./nodes.ts";
 import type { NodeElement } from "./nodes.ts";
 import { nodeMaxWidth } from "./nodeWidth.ts";
 import { attachInteractions } from "./interactions.ts";
-import { placeOnSide } from "./sides.ts";
+import { encodeSplit, placeOnSide, resolveSplit } from "./sides.ts";
+import type { SideSplit } from "../foldStore.ts";
 import type { SideSign } from "./sides.ts";
 import { SHORTCUTS, comboToString, resolveBindings } from "./shortcuts.ts";
 import type { KeyCombo, ShortcutBindings } from "./shortcuts.ts";
@@ -275,10 +276,15 @@ export class MindmapView extends TextFileView implements MapController {
 	private parsed: ParsedDoc | null = null;
 	private layoutNodes: LayoutNode[] = [];
 	/**
-	 * Custom fork: how many top-level branches the user put on the right in
-	 * balanced layout, or undefined to split by weight. Saved with the fold state.
+	 * Custom fork: where the user split the top-level branches between the sides
+	 * in balanced layout, or undefined to split by weight. Saved with the fold
+	 * state, and re-read against every parse (`settleSplit`).
 	 */
-	private manualSplit: number | undefined = undefined;
+	private sideSplit: SideSplit | undefined = undefined;
+	/** A count `moveToSide` chose, to be tied to branch keys once the note re-parses. */
+	private pendingRight: number | undefined = undefined;
+	/** The split the current paint lays out with: `sideSplit` resolved. */
+	private splitNow: number | undefined = undefined;
 	/** Custom fork: links between nodes of this note, drawn as dashed arrows. */
 	private relations: Relation[] = [];
 	private elements = new Map<string, NodeElement>();
@@ -866,7 +872,8 @@ export class MindmapView extends TextFileView implements MapController {
 		const parsed = this.parsed;
 		const path = this.file?.path;
 		const saved = parsed && path ? this.plugin.readNoteState(path) : null;
-		this.manualSplit = saved?.split;
+		this.sideSplit = saved?.split;
+		this.pendingRight = undefined;
 		if (!parsed || !saved) {
 			this.foldFrom(INITIAL_EXPAND_LEVEL);
 			return;
@@ -929,7 +936,7 @@ export class MindmapView extends TextFileView implements MapController {
 		if (!this.parsed || !path || !this.plugin.settings.rememberFolds) return;
 
 		const focus = this.selectedNode();
-		if (!focus && this.isDefaultFold() && this.manualSplit === undefined) {
+		if (!focus && this.isDefaultFold() && this.sideSplit === undefined) {
 			this.plugin.forgetNoteState(path);
 			return;
 		}
@@ -937,7 +944,7 @@ export class MindmapView extends TextFileView implements MapController {
 			collapsed: [...this.collapsedKeys],
 			focusKey: focus?.key,
 			focusId: focus?.id,
-			split: this.manualSplit,
+			split: this.sideSplit,
 		});
 	}
 
@@ -1226,6 +1233,9 @@ export class MindmapView extends TextFileView implements MapController {
 		// makes the browser lay any of it out.
 		this.canvas.content.replaceChildren(this.edgeLayer, this.nodeLayer);
 
+		// Custom fork: the left/right split for this parse, before it is saved.
+		this.settleSplit(rootLayout);
+
 		// The fold shape and the selection are both final by now, and neither
 		// changes again before the next paint.
 		this.rememberState();
@@ -1462,7 +1472,7 @@ export class MindmapView extends TextFileView implements MapController {
 		const laidOut = this.perf.now();
 		const result = layoutTree(rootLayout, {
 			mode: s.layout,
-			split: this.manualSplit,
+			split: this.splitNow,
 			horizontalGap: s.horizontalGap,
 			verticalGap: s.verticalGap,
 			padding: 60,
@@ -1986,6 +1996,23 @@ export class MindmapView extends TextFileView implements MapController {
 		return this.plugin.settings.layout === "balanced";
 	}
 
+	/**
+	 * Custom fork: resolve the saved split against this parse's top-level
+	 * branches, and re-tie it to them so later edits are measured from here.
+	 */
+	private settleSplit(rootLayout: LayoutNode): void {
+		const parsed = this.parsed;
+		if (!parsed) return;
+		const root = parsed.root.virtual ? "(file)" : parsed.root.text.trim();
+		const keys = rootLayout.children.map((c) => c.node.key);
+		if (this.pendingRight !== undefined) {
+			this.sideSplit = encodeSplit(root, keys, this.pendingRight);
+			this.pendingRight = undefined;
+		}
+		this.splitNow = resolveSplit(root, keys, this.sideSplit);
+		if (this.splitNow !== undefined) this.sideSplit = encodeSplit(root, keys, this.splitNow);
+	}
+
 	/** The top-level ids on each side, top to bottom, as last laid out. */
 	private sidesNow(): { right: string[]; left: string[] } {
 		const root = this.layoutNodes.find((n) => n.parent === null);
@@ -2044,7 +2071,7 @@ export class MindmapView extends TextFileView implements MapController {
 				? moveBefore(parsed, node, target)
 				: moveAfter(parsed, node, target);
 
-		this.manualSplit = placement.split;
+		this.pendingRight = placement.split;
 		this.collapsedKeys.delete(parsed.root.key);
 		// Crossing to the other side at the boundary keeps the note as it is and
 		// changes only the split, so there is no text to apply -- just repaint.
@@ -2093,8 +2120,9 @@ export class MindmapView extends TextFileView implements MapController {
 
 	/** Back to splitting by weight. */
 	resetSides(): void {
-		if (this.manualSplit === undefined) return;
-		this.manualSplit = undefined;
+		if (this.sideSplit === undefined && this.pendingRight === undefined) return;
+		this.sideSplit = undefined;
+		this.pendingRight = undefined;
 		this.paint("fold");
 	}
 
@@ -2127,8 +2155,8 @@ export class MindmapView extends TextFileView implements MapController {
 			}
 			// Anything else takes the node off the top level; if it was on the
 			// right, the right side is one shorter.
-			if (this.manualSplit !== undefined && this.sidesNow().right.includes(id)) {
-				this.manualSplit = Math.max(0, this.manualSplit - 1);
+			if (this.splitNow !== undefined && this.sidesNow().right.includes(id)) {
+				this.pendingRight = Math.max(0, this.splitNow - 1);
 			}
 		}
 
