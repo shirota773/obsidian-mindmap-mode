@@ -42,6 +42,11 @@ export interface LayoutNode {
 
 export interface LayoutOptions {
 	mode: "balanced" | "right";
+	/**
+	 * Custom fork: how many top-level branches go on the right in balanced mode,
+	 * set by dragging a branch across the root. Absent means "split by weight".
+	 */
+	split?: number;
 	horizontalGap: number;
 	verticalGap: number;
 	padding: number;
@@ -187,7 +192,15 @@ function setSide(n: LayoutNode, side: Side): void {
  * and a branch jumping from one side of the root to the other is the single
  * most disorienting thing a fold can do.
  */
-function partition(children: LayoutNode[]): { right: LayoutNode[]; left: LayoutNode[] } {
+function partition(
+	children: LayoutNode[],
+	manualSplit?: number,
+): { right: LayoutNode[]; left: LayoutNode[] } {
+	if (manualSplit !== undefined) {
+		// Custom fork: the user's split wins, and may leave a side empty on purpose.
+		const split = Math.max(0, Math.min(Math.floor(manualSplit), children.length));
+		return { right: children.slice(0, split), left: children.slice(split) };
+	}
 	const weights = children.map((child) => child.weight || leafCount(child));
 	const total = weights.reduce((a, b) => a + b, 0);
 	const half = total / 2;
@@ -223,13 +236,13 @@ export function layoutTree(root: LayoutNode, opts: LayoutOptions): LayoutResult 
 	root.y = -root.cardHeight / 2;
 	const childX = root.cardWidth + opts.horizontalGap;
 
-	if (opts.mode === "right" || root.children.length < 2) {
+	if (opts.mode === "right" || (root.children.length < 2 && opts.split === undefined)) {
 		placeGroup(root.children, childX, 0, opts);
 		const middle = cardMiddle(root.children);
 		for (const child of root.children) translate(child, 0, -middle);
 		setSideAll(root.children, 1);
 	} else {
-		const { right, left } = partition(root.children);
+		const { right, left } = partition(root.children, opts.split);
 
 		placeGroup(right, childX, 0, opts);
 		const middleRight = cardMiddle(right);

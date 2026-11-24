@@ -11,6 +11,12 @@
 > - Dropping in the gap between two cards places the node before / after the nearest card, instead of
 >   only the 7–14px band at each card's edge.
 > - Dropping on the root's top half puts the node first among its children; the bottom half still appends.
+> - Free left/right placement in the balanced layout: drag a top-level branch to the other side of the
+>   root (onto a card, into a gap, or into open canvas in the first-level column) and it stays there.
+>   The note order is still the reading order (right side top to bottom, then left side top to bottom);
+>   only the number of branches on the right is stored, per note, next to the fold state in `data.json`.
+>   "Reset left/right placement for this note" goes back to splitting by weight. Undo restores the note
+>   text but not that number.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
 >   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
 >   child. It is now written as a heading one level below the parent. "Add child" had the same bug.

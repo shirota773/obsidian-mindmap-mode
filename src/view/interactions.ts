@@ -4,6 +4,8 @@ import { comboFromEvent, resolveAction } from "./shortcuts.ts";
 import type { ShortcutBindings } from "./shortcuts.ts";
 import { nearestInGap, zoneOfCard } from "./dropTarget.ts";
 import type { CardBox, DropMode } from "./dropTarget.ts";
+import { sideSlot } from "./sides.ts";
+import type { SideCard, SideSign } from "./sides.ts";
 
 export type Direction = "up" | "down" | "left" | "right";
 
@@ -47,6 +49,10 @@ export interface MapController {
 
 	canDrop(id: string, targetId: string, mode: DropMode): boolean;
 	move(id: string, targetId: string, mode: DropMode): void;
+	/** Custom fork: free left/right placement in balanced layout. */
+	isBalanced(): boolean;
+	canDropOnSide(id: string): boolean;
+	moveToSide(id: string, side: SideSign, index: number): void;
 
 	undo(): void;
 	redo(): void;
@@ -237,7 +243,38 @@ export function attachInteractions(controller: MapController): () => void {
 		el: HTMLElement;
 		id: string;
 		mode: DropMode;
+		/** Custom fork: a drop in open canvas beside the root, on that side. */
+		slot?: { side: SideSign; index: number };
 	}
+
+	/**
+	 * Custom fork: in balanced layout, open canvas in the first-level column on
+	 * either side of the root is a place on that side. The highlight goes on the
+	 * card the node will sit above (or below the last one, or on the root when
+	 * the side is empty) so the drop says where it lands.
+	 */
+	const sideHit = (dragged: string, x: number, y: number): DropHit | null => {
+		if (!controller.isBalanced() || !controller.canDropOnSide(dragged)) return null;
+		const rootEl = viewport.querySelector<HTMLElement>('.mm-node[data-kind="root"]');
+		const rootId = rootEl?.dataset.id;
+		if (!rootEl || !rootId) return null;
+
+		const cards: Array<SideCard & { el: HTMLElement }> = [];
+		viewport.querySelectorAll<HTMLElement>('.mm-node[data-depth="1"]').forEach((el) => {
+			const id = el.dataset.id;
+			if (!id || id === dragged) return;
+			cards.push({ ...boxOf(el, id), side: el.dataset.side === "left" ? -1 : 1, el });
+		});
+		const slot = sideSlot(boxOf(rootEl, rootId), cards, x, y);
+		if (!slot) return null;
+
+		const own = cards.filter((c) => c.side === slot.side).sort((a, b) => a.top - b.top);
+		const below = own[slot.index];
+		const above = own[own.length - 1];
+		if (below) return { el: below.el, id: below.id, mode: "before", slot };
+		if (above) return { el: above.el, id: above.id, mode: "after", slot };
+		return { el: rootEl, id: rootId, mode: "child", slot };
+	};
 
 	/**
 	 * Custom fork: what a drop at this point would do.
@@ -268,7 +305,9 @@ export function attachInteractions(controller: MapController): () => void {
 			});
 		const gap = nearestInGap(boxes, x, y, dragged);
 		const el = gap ? nodes.get(gap.id) : undefined;
-		if (!gap || !el || !controller.canDrop(dragged, gap.id, gap.mode)) return null;
+		if (!gap || !el || !controller.canDrop(dragged, gap.id, gap.mode)) {
+			return sideHit(dragged, x, y);
+		}
 		return { el, id: gap.id, mode: gap.mode };
 	};
 
@@ -301,7 +340,8 @@ export function attachInteractions(controller: MapController): () => void {
 
 		hovered = hit.el;
 		hoveredMode = mode;
-		if (!controller.canDrop(dragId, hit.id, mode)) hit.el.addClass("is-drop-invalid");
+		if (hit.slot) hit.el.addClass(mode === "child" ? "is-drop-target" : mode === "after" ? "is-drop-after" : "is-drop-before");
+		else if (!controller.canDrop(dragId, hit.id, mode)) hit.el.addClass("is-drop-invalid");
 		else if (mode === "child") hit.el.addClass("is-drop-target");
 		// "first-child" draws the line above the root: the node goes in at the top.
 		else hit.el.addClass(mode === "after" ? "is-drop-after" : "is-drop-before");
@@ -368,6 +408,12 @@ export function attachInteractions(controller: MapController): () => void {
 		if (dragging) {
 			gate.dragEnded();
 			const hit = hitTest(dragId, ev.clientX, ev.clientY);
+			if (hit?.slot) {
+				const source = dragId;
+				endDrag();
+				controller.moveToSide(source, hit.slot.side, hit.slot.index);
+				return;
+			}
 			if (hit && controller.canDrop(dragId, hit.id, hit.mode)) {
 				const source = dragId;
 				endDrag();

@@ -162,3 +162,18 @@ test("renaming a folder holding nothing remembered changes nothing", () => {
 	const store = putNoteState({}, "Notes/a.md", { collapsed: [] }, 1);
 	assert.equal(renameFolder(store, "Archive", "Attic"), store);
 });
+
+// --- custom fork: the manual left/right split --------------------------------
+
+test("a manual split is stored and read back (custom fork)", () => {
+	const store = putNoteState({}, "a.md", { collapsed: [], split: 2 }, 1);
+	assert.equal(store["a.md"].split, 2);
+	assert.deepEqual(readStore(store), store);
+});
+
+test("a split that is not a whole number >= 0 is dropped on read (custom fork)", () => {
+	for (const split of [-1, 1.5, "2", null]) {
+		const read = readStore({ "a.md": { collapsed: [], at: 1, split } });
+		assert.equal(read["a.md"].split, undefined, `split ${String(split)} survived`);
+	}
+});

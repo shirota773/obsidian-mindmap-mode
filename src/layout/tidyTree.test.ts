@@ -418,3 +418,34 @@ test("a left-side branch is mirrored on its card, not on its node box", () => {
 		assert.equal(child.x + child.cardWidth, 2 * axis - (root.x + root.cardWidth + OPTS.horizontalGap));
 	}
 });
+
+// --- custom fork: a manual left/right split ----------------------------------
+
+test("a manual split puts exactly that many branches on the right (custom fork)", () => {
+	const root = build({ children: [leaf(), leaf(), leaf(), leaf()] });
+	layoutTree(root, { ...OPTS, split: 1 });
+	assert.deepEqual(root.children.map((c) => c.side), [1, -1, -1, -1]);
+	assertNoOverlaps(root.children);
+});
+
+test("a split of 0 or of every branch leaves one side empty (custom fork)", () => {
+	const allLeft = build({ children: [leaf(), leaf(), leaf()] });
+	layoutTree(allLeft, { ...OPTS, split: 0 });
+	assert.deepEqual(allLeft.children.map((c) => c.side), [-1, -1, -1]);
+
+	const allRight = build({ children: [leaf(), leaf(), leaf()] });
+	layoutTree(allRight, { ...OPTS, split: 3 });
+	assert.deepEqual(allRight.children.map((c) => c.side), [1, 1, 1]);
+});
+
+test("an out-of-range split is clamped to the branches that exist (custom fork)", () => {
+	const root = build({ children: [leaf(), leaf()] });
+	layoutTree(root, { ...OPTS, split: 9 });
+	assert.deepEqual(root.children.map((c) => c.side), [1, 1]);
+});
+
+test("single-side mode ignores the split (custom fork)", () => {
+	const root = build({ children: [leaf(), leaf(), leaf()] });
+	layoutTree(root, { ...OPTS, mode: "right", split: 0 });
+	assert.deepEqual(root.children.map((c) => c.side), [1, 1, 1]);
+});

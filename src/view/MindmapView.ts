@@ -58,6 +58,8 @@ import { buildNodeElement } from "./nodes.ts";
 import type { NodeElement } from "./nodes.ts";
 import { nodeMaxWidth } from "./nodeWidth.ts";
 import { attachInteractions } from "./interactions.ts";
+import { placeOnSide } from "./sides.ts";
+import type { SideSign } from "./sides.ts";
 import { SHORTCUTS, comboToString, resolveBindings } from "./shortcuts.ts";
 import type { KeyCombo, ShortcutBindings } from "./shortcuts.ts";
 import { SearchBar } from "./searchBar.ts";
@@ -266,6 +268,11 @@ export class MindmapView extends TextFileView implements MapController {
 	private nodeLayer: HTMLElement | null = null;
 	private parsed: ParsedDoc | null = null;
 	private layoutNodes: LayoutNode[] = [];
+	/**
+	 * Custom fork: how many top-level branches the user put on the right in
+	 * balanced layout, or undefined to split by weight. Saved with the fold state.
+	 */
+	private manualSplit: number | undefined = undefined;
 	private elements = new Map<string, NodeElement>();
 	/**
 	 * The card for each entry of `layoutNodes`, at the same index.
@@ -850,6 +857,7 @@ export class MindmapView extends TextFileView implements MapController {
 		const parsed = this.parsed;
 		const path = this.file?.path;
 		const saved = parsed && path ? this.plugin.readNoteState(path) : null;
+		this.manualSplit = saved?.split;
 		if (!parsed || !saved) {
 			this.foldFrom(INITIAL_EXPAND_LEVEL);
 			return;
@@ -912,7 +920,7 @@ export class MindmapView extends TextFileView implements MapController {
 		if (!this.parsed || !path || !this.plugin.settings.rememberFolds) return;
 
 		const focus = this.selectedNode();
-		if (!focus && this.isDefaultFold()) {
+		if (!focus && this.isDefaultFold() && this.manualSplit === undefined) {
 			this.plugin.forgetNoteState(path);
 			return;
 		}
@@ -920,6 +928,7 @@ export class MindmapView extends TextFileView implements MapController {
 			collapsed: [...this.collapsedKeys],
 			focusKey: focus?.key,
 			focusId: focus?.id,
+			split: this.manualSplit,
 		});
 	}
 
@@ -1441,6 +1450,7 @@ export class MindmapView extends TextFileView implements MapController {
 		const laidOut = this.perf.now();
 		const result = layoutTree(rootLayout, {
 			mode: s.layout,
+			split: this.manualSplit,
 			horizontalGap: s.horizontalGap,
 			verticalGap: s.verticalGap,
 			padding: 60,
@@ -1954,6 +1964,85 @@ export class MindmapView extends TextFileView implements MapController {
 		});
 	}
 
+	// --- custom fork: free left/right placement ---------------------------------
+
+	isBalanced(): boolean {
+		return this.plugin.settings.layout === "balanced";
+	}
+
+	/** The top-level ids on each side, top to bottom, as last laid out. */
+	private sidesNow(): { right: string[]; left: string[] } {
+		const root = this.layoutNodes.find((n) => n.parent === null);
+		const children = root?.children ?? [];
+		return {
+			right: children.filter((c) => c.side === 1).map((c) => c.node.id),
+			left: children.filter((c) => c.side === -1).map((c) => c.node.id),
+		};
+	}
+
+	/**
+	 * The side and position a drop onto the root or beside a top-level branch
+	 * means, or null for a drop anywhere deeper.
+	 */
+	private slotForDrop(
+		parsed: ParsedDoc,
+		node: MindNode,
+		target: MindNode,
+		mode: DropMode,
+	): { side: SideSign; index: number } | null {
+		if (target === parsed.root) {
+			if (mode === "first-child") return { side: 1, index: 0 };
+			if (mode === "child") return { side: -1, index: Number.MAX_SAFE_INTEGER };
+			return null;
+		}
+		if (target.parent !== parsed.root || (mode !== "before" && mode !== "after")) return null;
+
+		const { right, left } = this.sidesNow();
+		const side: SideSign = right.includes(target.id) ? 1 : -1;
+		const group = (side === 1 ? right : left).filter((x) => x !== node.id);
+		const at = group.indexOf(target.id);
+		if (at < 0) return null;
+		return { side, index: at + (mode === "after" ? 1 : 0) };
+	}
+
+	canDropOnSide(id: string): boolean {
+		const parsed = this.parsed;
+		const node = parsed?.byId.get(id);
+		if (!parsed || !node || node === parsed.root) return false;
+		return node.parent === parsed.root || canMove(node, parsed.root);
+	}
+
+	/** Make `id` the `index`-th top-level branch on `side`, and remember the split. */
+	moveToSide(id: string, side: SideSign, index: number): void {
+		const parsed = this.parsed;
+		const node = parsed?.byId.get(id);
+		if (!parsed || !node || !this.canDropOnSide(id)) return;
+
+		const { right, left } = this.sidesNow();
+		const placement = placeOnSide(right, left, id, side, index, (x) => parsed.byId.has(x));
+		const anchor = placement.anchor;
+		const target = anchor ? parsed.byId.get(anchor.targetId) : undefined;
+		const mutation = !anchor || !target
+			? moveNode(parsed, node, parsed.root)
+			: anchor.mode === "before"
+				? moveBefore(parsed, node, target)
+				: moveAfter(parsed, node, target);
+
+		this.manualSplit = placement.split;
+		this.collapsedKeys.delete(parsed.root.key);
+		// Crossing to the other side at the boundary keeps the note as it is and
+		// changes only the split, so there is no text to apply -- just repaint.
+		if (mutation.ok && mutation.text !== this.data) this.apply(mutation);
+		else this.paint("fold");
+	}
+
+	/** Back to splitting by weight. */
+	resetSides(): void {
+		if (this.manualSplit === undefined) return;
+		this.manualSplit = undefined;
+		this.paint("fold");
+	}
+
 	canDrop(id: string, targetId: string, mode: DropMode): boolean {
 		const node = this.parsed?.byId.get(id);
 		const target = this.parsed?.byId.get(targetId);
@@ -1973,6 +2062,20 @@ export class MindmapView extends TextFileView implements MapController {
 		const node = parsed?.byId.get(id);
 		const target = parsed?.byId.get(targetId);
 		if (!parsed || !node || !target) return;
+
+		if (this.isBalanced()) {
+			// Custom fork: a drop among the top-level branches picks a side too.
+			const slot = this.slotForDrop(parsed, node, target, mode);
+			if (slot) {
+				this.moveToSide(id, slot.side, slot.index);
+				return;
+			}
+			// Anything else takes the node off the top level; if it was on the
+			// right, the right side is one shorter.
+			if (this.manualSplit !== undefined && this.sidesNow().right.includes(id)) {
+				this.manualSplit = Math.max(0, this.manualSplit - 1);
+			}
+		}
 
 		if (mode === "first-child") {
 			const first = target.children[0];

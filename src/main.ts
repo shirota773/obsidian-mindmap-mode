@@ -103,6 +103,18 @@ export default class MindmapPlugin extends Plugin {
 			},
 		});
 
+		// Custom fork: drop the manual left/right split and go back to splitting by weight.
+		this.addCommand({
+			id: "reset-sides",
+			name: "Reset left/right placement for this note",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MindmapView);
+				if (!view) return false;
+				if (!checking) view.resetSides();
+				return true;
+			},
+		});
+
 		// No default hotkey: the map already takes Ctrl/Cmd+F for itself while it
 		// has the keyboard, and claiming it globally would show up as a conflict
 		// against Obsidian's own search in every other view.

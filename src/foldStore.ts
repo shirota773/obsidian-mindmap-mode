@@ -30,6 +30,11 @@ export interface NoteViewState {
 	 * focus, and losing it costs a default framing, nothing more.
 	 */
 	focusId?: string;
+	/**
+	 * Custom fork: how many top-level branches sit on the right in balanced
+	 * layout, once the user has dragged one across the root. Absent: by weight.
+	 */
+	split?: number;
 	/** Last touched, in ms. Only ever compared, never shown. */
 	at: number;
 }
@@ -64,7 +69,12 @@ function readEntry(value: unknown): NoteViewState | null {
 	};
 	if (typeof value.focusKey === "string") state.focusKey = value.focusKey;
 	if (typeof value.focusId === "string") state.focusId = value.focusId;
+	if (isSplit(value.split)) state.split = value.split;
 	return state;
+}
+
+function isSplit(value: unknown): value is number {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 /**
@@ -116,6 +126,7 @@ export function putNoteState(
 	const state: NoteViewState = { collapsed: [...entry.collapsed], at: now };
 	if (entry.focusKey !== undefined) state.focusKey = entry.focusKey;
 	if (entry.focusId !== undefined) state.focusId = entry.focusId;
+	if (entry.split !== undefined && isSplit(entry.split)) state.split = entry.split;
 	return prune({ ...store, [path]: state });
 }
 
