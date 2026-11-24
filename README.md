@@ -11,6 +11,9 @@
 > - Dropping in the gap between two cards places the node before / after the nearest card, instead of
 >   only the 7–14px band at each card's edge.
 > - Dropping on the root's top half puts the node first among its children; the bottom half still appends.
+> - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
+>   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
+>   child. It is now written as a heading one level below the parent. "Add child" had the same bug.
 >
 > The drop geometry lives in `src/view/dropTarget.ts` (pure, unit-tested).
 

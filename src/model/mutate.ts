@@ -132,12 +132,28 @@ export function setAnnotation(parsed: ParsedDoc, node: MindNode, text: string): 
 	return done(doc, node.lineStart);
 }
 
+/**
+ * Custom fork: whether something appended as `parent`'s last child has to be
+ * written as a heading.
+ *
+ * Appending writes at the end of `parent`'s block. When the last child there is
+ * a heading, that spot is inside the heading's section, so a list item written
+ * there would be read back as the heading's content. `except` is the node being
+ * moved, which no longer counts once it has left.
+ */
+function appendsAfterHeading(parent: MindNode, except?: MindNode): boolean {
+	const last = parent.children.filter((c) => c !== except && c.kind !== "body").at(-1);
+	return last !== undefined && isHeadingLike(last);
+}
+
 export function addChild(
 	parsed: ParsedDoc,
 	parent: MindNode,
 	text = "",
 ): Mutation {
-	const spec = childSpecFor(parent, parsed.indentUnit);
+	const spec = appendsAfterHeading(parent)
+		? childSpecFor(parent, parsed.indentUnit, "heading")
+		: childSpecFor(parent, parsed.indentUnit);
 	const insertAt = Math.max(parent.blockEnd + 1, parsed.bodyStart);
 	const { block, offset } = padBlock(
 		parsed.doc.lines,
@@ -310,12 +326,14 @@ export function moveNode(
 	after?: MindNode,
 ): Mutation {
 	if (!canMove(node, newParent)) return unchanged(parsed);
+	// Appending (no `after`) behind a trailing heading must be a heading too.
+	const asHeading = isHeadingLike(node) || (!after && appendsAfterHeading(newParent, node));
 	return moveWithAnchor(
 		parsed,
 		node,
 		newParent,
 		(after ?? newParent).blockEnd,
-		isHeadingLike(node) ? "heading" : "listitem",
+		asHeading ? "heading" : "listitem",
 	);
 }
 

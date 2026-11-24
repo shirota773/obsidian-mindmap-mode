@@ -314,10 +314,15 @@ test("moving a list item under a heading lifts it to a top-level list", () => {
 });
 
 test("a checkbox survives a round trip through heading form", () => {
-	const p = parse("# R\n\n## H\n\n- [x] task\n");
-	const up = moveNode(p, find(p, "task"), p.root);
-	// Under the root heading it stays a list item, so the checkbox is intact.
+	// Custom fork: upstream moved `task` to the root here and expected it to stay
+	// a list item -- but written after `## H` it re-parses as H's child. Under a
+	// parent of list items it does stay one, so the checkbox is intact.
+	const p = parse("# R\n\n## H\n\n- [x] task\n\n## K\n\n- k\n");
+	const up = moveNode(p, find(p, "task"), find(p, "K"));
 	assert.ok(lines(up.text).includes("- [x] task"));
+	// Appended to the root after a heading it becomes a heading, checkbox as text.
+	const toRoot = moveNode(p, find(p, "task"), p.root);
+	assert.ok(lines(toRoot.text).includes("## [x] task"), toRoot.text);
 
 	// Force the conversion by making it a child of a heading-level node.
 	const p2 = parse("# R\n\n## H\n\n### Deep\n");
@@ -646,8 +651,10 @@ test("every legal move round-trips and keeps code content intact", () => {
 				`move "${node.text}" -> "${target.text}" damaged code content`,
 			);
 			// Nothing is ever lost or duplicated.
+			// Custom fork: counted as a node line, list item or heading, since an
+			// append after a trailing heading now writes it as a heading.
 			assert.equal(
-				out.text.split("- two").length - 1,
+				lines(out.text).filter((l) => /^(\s*- |#+ )two$/.test(l)).length,
 				1,
 				`move "${node.text}" -> "${target.text}" duplicated a node`,
 			);
@@ -710,4 +717,46 @@ test("focusLine resolves to a real node after re-parsing", () => {
 			assert.ok(found, `${name} on "${node.text}" left a dangling focusLine`);
 		}
 	}
+});
+
+// --- custom fork: appending after a trailing heading ---------------------------
+// A list item written at the end of a parent whose last child is a heading is
+// read as that heading's content, not the parent's. Appending must therefore be
+// written as a heading whenever the parent's last child is one.
+
+const TRAILING = "# R\n\n## A\n\n- a1\n- a2\n\n## B\n\n### C\n\n- c1\n";
+
+test("moving a list item to the root after heading children writes a heading (custom fork)", () => {
+	const p = parse(TRAILING);
+	const out = moveNode(p, find(p, "a1"), p.root);
+	assert.ok(out.ok);
+	assert.ok(out.text.endsWith("## a1\n"), out.text);
+	const re = parse(out.text);
+	assert.equal(find(re, "a1").parent, re.root);
+	assert.equal(serialize(re), out.text);
+});
+
+test("moving a list item under a heading that ends in a sub-heading writes a sub-heading (custom fork)", () => {
+	const p = parse(TRAILING);
+	const out = moveNode(p, find(p, "a1"), find(p, "B"));
+	assert.ok(out.ok);
+	const re = parse(out.text);
+	assert.equal(find(re, "a1").parent?.text, "B");
+	assert.equal(find(re, "a1").kind, "heading");
+});
+
+test("a parent whose children are all list items still gets a list item (custom fork)", () => {
+	const p = parse(TRAILING);
+	const out = moveNode(p, find(p, "c1"), find(p, "A"));
+	const re = parse(out.text);
+	assert.equal(find(re, "c1").parent?.text, "A");
+	assert.equal(find(re, "c1").kind, "listitem");
+});
+
+test("adding a child to a parent that ends in a heading adds a heading (custom fork)", () => {
+	const p = parse("# R\n\n- r1\n\n## B\n\n- b1\n");
+	const out = addChild(p, p.root, "new");
+	const re = parse(out.text);
+	assert.equal(find(re, "new").parent, re.root);
+	assert.equal(find(re, "new").kind, "heading");
 });
