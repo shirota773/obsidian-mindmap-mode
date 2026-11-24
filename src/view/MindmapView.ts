@@ -28,6 +28,10 @@ import {
 	moveBefore,
 	moveNode,
 	addRelation,
+	addTheme,
+	canAddTheme,
+	relabelRelation,
+	removeRelation,
 	removeRelations,
 	outdentNode,
 	renameNode,
@@ -287,6 +291,12 @@ export class MindmapView extends TextFileView implements MapController {
 	private splitNow: number | undefined = undefined;
 	/** Custom fork: links between nodes of this note, drawn as dashed arrows. */
 	private relations: Relation[] = [];
+	/** Custom fork: "Add relation…" waiting for its target to be clicked. */
+	private relationPick: {
+		fromKey: string;
+		banner: HTMLElement;
+		onKey: (ev: KeyboardEvent) => void;
+	} | null = null;
 	private elements = new Map<string, NodeElement>();
 	/**
 	 * The card for each entry of `layoutNodes`, at the same index.
@@ -406,7 +416,7 @@ export class MindmapView extends TextFileView implements MapController {
 			// and the button never fires. A leaf's empty tools slot is still
 			// pannable because that row is `pointer-events: none` until hovered,
 			// so the pointer never lands on the node at all.
-			canPan: (target) => !target.closest(".mm-node"),
+			canPan: (target) => !target.closest(".mm-node, .mm-relation-group"),
 			// Every camera move ends up here, coalesced to one call a frame:
 			// panning, zooming, fitting, and the jumps that framing does.
 			onView: () => this.cullToView(),
@@ -585,6 +595,10 @@ export class MindmapView extends TextFileView implements MapController {
 		this.addAction("file-text", "Edit as markdown", () => {
 			void this.plugin.toggleLeaf(this.leaf);
 		});
+		// Custom fork: annotations under the card <-> as tooltips, from the map.
+		this.addAction("message-square-text", "Toggle annotation display (under card / tooltip)", () => {
+			void this.plugin.toggleAnnotationDisplay();
+		});
 	}
 
 	override async onClose(): Promise<void> {
@@ -598,6 +612,7 @@ export class MindmapView extends TextFileView implements MapController {
 		this.detachInteractions = null;
 		this.closePopover();
 		this.closeDialog();
+		this.cancelRelationPick();
 		this.canvas.destroy();
 	}
 
@@ -2093,25 +2108,151 @@ export class MindmapView extends TextFileView implements MapController {
 		}
 	}
 
+	/**
+	 * "Add relation…": pick the target by clicking it on the map. A banner says
+	 * so, and offers the searchable list for keyboard use; Esc cancels.
+	 */
 	addRelationFrom(id: string): void {
+		const from = this.parsed?.byId.get(id);
+		if (!from || from.virtual || from.lineStart < 0) return;
+		this.cancelRelationPick();
+
+		const banner = this.contentEl.createDiv({ cls: "mm-pick-banner" });
+		banner.createSpan({ text: `Click the node "${this.shortName(from)}" relates to` });
+		const search = banner.createEl("button", { text: "Search…" });
+		search.addEventListener("click", () => {
+			this.cancelRelationPick();
+			this.searchRelationTarget(from.key);
+		});
+		const cancel = banner.createEl("button", { text: "Cancel" });
+		cancel.addEventListener("click", () => this.cancelRelationPick());
+		const onKey = (ev: KeyboardEvent): void => {
+			if (ev.key !== "Escape") return;
+			ev.preventDefault();
+			ev.stopPropagation();
+			this.cancelRelationPick();
+		};
+		window.addEventListener("keydown", onKey, true);
+
+		this.relationPick = { fromKey: from.key, banner, onKey };
+		this.canvas.viewport.addClass("is-picking-relation");
+		this.elements.get(from.id)?.el.addClass("is-relation-source");
+	}
+
+	isPickingRelation(): boolean {
+		return this.relationPick !== null;
+	}
+
+	/** The card clicked while picking: that is the target. */
+	pickRelationTarget(id: string): void {
+		const pick = this.relationPick;
 		const parsed = this.parsed;
-		const from = parsed?.byId.get(id);
+		if (!pick || !parsed) return;
+		const from = parsed.byKey.get(pick.fromKey);
+		const to = this.bodyNodes.has(id) ? undefined : parsed.byId.get(id);
+		if (!from) {
+			this.cancelRelationPick();
+			return;
+		}
+		if (!to || to === from || to.virtual || to.lineStart < 0) {
+			new Notice("Pick another node: that one cannot be a relation target.");
+			return;
+		}
+		this.cancelRelationPick();
+		this.askRelationLabel(from.key, to.key);
+	}
+
+	cancelRelationPick(): void {
+		const pick = this.relationPick;
+		if (!pick) return;
+		this.relationPick = null;
+		window.removeEventListener("keydown", pick.onKey, true);
+		pick.banner.remove();
+		this.canvas.viewport.removeClass("is-picking-relation");
+		for (const el of this.contentEl.querySelectorAll(".is-relation-source")) el.removeClass("is-relation-source");
+	}
+
+	/** The searchable list of every node, for picking a target by keyboard. */
+	private searchRelationTarget(fromKey: string): void {
+		const parsed = this.parsed;
+		const from = parsed?.byKey.get(fromKey);
 		if (!parsed || !from) return;
 		const candidates: MindNode[] = [];
 		walk(parsed.root, (n) => {
 			if (n !== from && !n.virtual && n.lineStart >= 0 && n.kind !== "body") candidates.push(n);
 		});
 		new RelationTargetModal(this.app, candidates, this.noteName(), (to) => {
-			const name = breadcrumb(to, this.noteName()).split(" › ").at(-1) ?? "";
-			new RelationLabelModal(this.app, name, (label) => {
-				// Re-read: the note may have changed while the dialogs were open.
-				const now = this.parsed;
-				const a = now?.byKey.get(from.key);
-				const b = now?.byKey.get(to.key);
-				if (!now || !a || !b) return;
-				this.apply(addRelation(now, a, b, label, this.freshBlockId()));
-			}).open();
+			this.askRelationLabel(from.key, to.key);
 		}).open();
+	}
+
+	private askRelationLabel(fromKey: string, toKey: string): void {
+		const to = this.parsed?.byKey.get(toKey);
+		if (!to) return;
+		new RelationLabelModal(this.app, this.shortName(to), (label) => {
+			// Re-read: the note may have changed while the dialog was open.
+			const now = this.parsed;
+			const a = now?.byKey.get(fromKey);
+			const b = now?.byKey.get(toKey);
+			if (!now || !a || !b) return;
+			this.apply(addRelation(now, a, b, label, this.freshBlockId()));
+		}).open();
+	}
+
+	/** The name a node goes by in menus: its last breadcrumb step. */
+	private shortName(node: MindNode): string {
+		return breadcrumb(node, this.noteName()).split(" › ").at(-1) ?? "";
+	}
+
+	/** One relation line's menu: what it joins, then relabel or delete it. */
+	showRelationMenu(index: number, ev: MouseEvent): void {
+		const parsed = this.parsed;
+		const rel = this.relations[index];
+		const from = rel && parsed?.byId.get(rel.fromId);
+		const to = rel && parsed?.byId.get(rel.toId);
+		if (!parsed || !rel || !from || !to) return;
+		const menu = new Menu();
+		const title = `${this.shortName(from)} → ${this.shortName(to)}${rel.label ? `  (${rel.label})` : ""}`;
+		menu.addItem((item) => item.setTitle(title).setIcon("waypoints").setDisabled(true));
+		menu.addSeparator();
+		menu.addItem((item) => item
+			.setTitle(rel.label ? "Edit label…" : "Add label…")
+			.setIcon("pencil")
+			.onClick(() => this.relabelRelationAt(index)));
+		menu.addItem((item) => item
+			.setTitle("Delete this relation")
+			.setIcon("trash-2")
+			.onClick(() => this.removeRelationAt(index)));
+		menu.showAtMouseEvent(ev);
+	}
+
+	private relabelRelationAt(index: number): void {
+		const rel = this.relations[index];
+		const from = rel && this.parsed?.byId.get(rel.fromId);
+		const to = rel && this.parsed?.byId.get(rel.toId);
+		if (!rel || !from || !to) return;
+		new RelationLabelModal(this.app, this.shortName(to), (label) => {
+			// Re-read: the note may have changed while the dialog was open.
+			const now = this.parsed;
+			const node = now?.byKey.get(from.key);
+			if (!now || !node) return;
+			this.apply(relabelRelation(now, node, rel.linkIndex, label, this.noteName()));
+		}, rel.label, "Save").open();
+	}
+
+	private removeRelationAt(index: number): void {
+		const rel = this.relations[index];
+		if (!rel) return;
+		this.withNode(rel.fromId, (parsed, node) =>
+			this.apply(removeRelation(parsed, node, rel.linkIndex, this.noteName())),
+		);
+	}
+
+	/** Custom fork: a new `# ` theme at the end of the note, named in place. */
+	addThemeToNote(): void {
+		const parsed = this.parsed;
+		if (!parsed || !canAddTheme(parsed)) return;
+		this.apply(addTheme(parsed), true);
 	}
 
 	removeRelationsFrom(id: string): void {
@@ -2251,9 +2392,20 @@ export class MindmapView extends TextFileView implements MapController {
 				.setTitle("Add relation…")
 				.setIcon("waypoints")
 				.onClick(() => this.addRelationFrom(id)));
-			if (this.relations.some((r) => r.fromId === id)) {
+			// One item per relation, so one of several can go on its own.
+			const parsed = this.parsed;
+			this.relations.forEach((rel, index) => {
+				const to = rel.fromId === id ? parsed?.byId.get(rel.toId) : undefined;
+				if (!to) return;
+				const label = rel.label ? ` (${rel.label})` : "";
 				menu.addItem((item) => item
-					.setTitle("Remove relations from here")
+					.setTitle(`Remove relation → ${this.shortName(to)}${label}`)
+					.setIcon("unlink")
+					.onClick(() => this.removeRelationAt(index)));
+			});
+			if (this.relations.filter((r) => r.fromId === id).length > 1) {
+				menu.addItem((item) => item
+					.setTitle("Remove all relations from here")
 					.setIcon("unlink")
 					.onClick(() => this.removeRelationsFrom(id)));
 			}
@@ -2269,6 +2421,15 @@ export class MindmapView extends TextFileView implements MapController {
 						if (node.checkbox === null) this.toggleCheck(id);
 						else this.removeCheck(id);
 					}),
+			);
+		}
+		// Custom fork: another `# ` theme beside the current one(s).
+		if (!node.parent && this.parsed && canAddTheme(this.parsed)) {
+			menu.addItem((item) =>
+				item
+					.setTitle("Add theme (new # heading)")
+					.setIcon("heading-1")
+					.onClick(() => this.addThemeToNote()),
 			);
 		}
 		if (node.parent) {

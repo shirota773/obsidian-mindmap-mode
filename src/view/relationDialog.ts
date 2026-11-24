@@ -43,14 +43,23 @@ export class RelationTargetModal extends FuzzySuggestModal<MindNode> {
 }
 
 export class RelationLabelModal extends Modal {
-	private value = "";
+	private value: string;
 	private readonly targetName: string;
 	private readonly onDone: (label: string | null) => void;
+	private readonly buttonText: string;
 
-	constructor(app: App, targetName: string, onDone: (label: string | null) => void) {
+	constructor(
+		app: App,
+		targetName: string,
+		onDone: (label: string | null) => void,
+		initial: string | null = null,
+		buttonText = "Add",
+	) {
 		super(app);
 		this.targetName = targetName;
 		this.onDone = onDone;
+		this.value = initial ?? "";
+		this.buttonText = buttonText;
 	}
 
 	override onOpen(): void {
@@ -63,7 +72,7 @@ export class RelationLabelModal extends Modal {
 			.setName("Label")
 			.setDesc("Shown on the arrow. Leave empty for none.")
 			.addText((text) => {
-				text.setPlaceholder("e.g. causes").onChange((v) => (this.value = v));
+				text.setPlaceholder("e.g. causes").setValue(this.value).onChange((v) => (this.value = v));
 				text.inputEl.addEventListener("keydown", (ev) => {
 					if (ev.key === "Enter" && !ev.isComposing) {
 						ev.preventDefault();
@@ -72,7 +81,7 @@ export class RelationLabelModal extends Modal {
 				});
 				window.setTimeout(() => text.inputEl.focus(), 0);
 			});
-		new Setting(this.contentEl).addButton((b) => b.setButtonText("Add").setCta().onClick(submit));
+		new Setting(this.contentEl).addButton((b) => b.setButtonText(this.buttonText).setCta().onClick(submit));
 	}
 
 	override onClose(): void {

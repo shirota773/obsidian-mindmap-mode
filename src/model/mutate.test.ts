@@ -19,6 +19,10 @@ import {
 	moveNode,
 	outdentNode,
 	addRelation,
+	addTheme,
+	canAddTheme,
+	relabelRelation,
+	removeRelation,
 	removeRelations,
 	removeCheckbox,
 	renameNode,
@@ -802,4 +806,44 @@ test("removing relations strips this note's links and keeps everything else (cus
 	const p = parse("# R\n\n## A\n\n- a1 [[#A|x]] see [[Other]] [[#^b]] ^own\n");
 	const out = removeRelations(p, find(p, "a1 [[#A|x]] see [[Other]] [[#^b]] ^own"));
 	assert.ok(lines(out.text).includes("- a1 see [[Other]] ^own"), out.text);
+});
+
+test("removing one relation leaves the node's other links (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1 [[#A|x]] see [[Other]] [[#^b]] ^own\n");
+	const node = find(p, "a1 [[#A|x]] see [[Other]] [[#^b]] ^own");
+	assert.ok(lines(removeRelation(p, node, 1).text).includes("- a1 [[#A|x]] see [[Other]] ^own"));
+	assert.ok(lines(removeRelation(p, node, 0).text).includes("- a1 see [[Other]] [[#^b]] ^own"));
+	assert.equal(removeRelation(p, node, 9).ok, false);
+});
+
+test("relabelling one relation rewrites only its alias (custom fork)", () => {
+	const p = parse("# R\n\n## A\n\n- a1 [[#A|x]] [[#^b]]\n");
+	const node = find(p, "a1 [[#A|x]] [[#^b]]");
+	assert.ok(lines(relabelRelation(p, node, 0, "y").text).includes("- a1 [[#A|y]] [[#^b]]"));
+	assert.ok(lines(relabelRelation(p, node, 0, null).text).includes("- a1 [[#A]] [[#^b]]"));
+	assert.ok(lines(relabelRelation(p, node, 1, "z|]").text).includes("- a1 [[#A|x]] [[#^b|z]]"));
+});
+
+test("adding a theme appends a new H1 and focuses it (custom fork)", () => {
+	const p = parse("# R\n\n## A\n- a1\n");
+	assert.equal(canAddTheme(p), true);
+	const out = addTheme(p);
+	// The note keeps its final newline.
+	assert.deepEqual(lines(out.text).slice(-3), ["", "# ", ""]);
+	assert.equal(out.focusLine, lines(out.text).length - 2);
+	const again = parse(out.text);
+	assert.equal(again.root.virtual, true);
+	assert.equal(again.root.children.length, 2);
+});
+
+test("a theme is added after trailing blank lines, not below them (custom fork)", () => {
+	const out = addTheme(parse("# A\n\n# B\n\n\n"));
+	assert.deepEqual(lines(out.text).slice(2, 5), ["# B", "", "# "]);
+	assert.equal(parse(out.text).root.children.length, 3);
+});
+
+test("no theme is offered without an H1 to stand beside (custom fork)", () => {
+	assert.equal(canAddTheme(parse("- a\n- b\n")), false);
+	assert.equal(canAddTheme(parse("## A\n\n## B\n")), false);
+	assert.equal(canAddTheme(parse("# A\n\n# B\n")), true);
 });

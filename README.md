@@ -22,12 +22,17 @@
 > - Relation lines: a link into the same note written in a node's title -- `[[#Heading]]`, or
 >   `[[#^id]]` for a list item ending in ` ^id` -- is drawn as a dashed arrow to that node; an alias
 >   (`[[#Heading|causes]]`) is the arrow's label. On the card the link text and the ` ^id` are hidden
->   and a small ↗ marks the source. Right-click a node → **Add relation…** picks the target and label
->   (adding a block id to a list-item target when needed); **Remove relations from here** strips them.
+>   and a small ↗ marks the source. Right-click a node → **Add relation…**, then click the target on
+>   the map (or **Search…** in the banner for a list; Esc cancels) and give the label
+>   (adding a block id to a list-item target when needed). Click (or right-click) a line to relabel or
+>   delete that one relation; the node menu also lists one **Remove relation → …** per relation.
 >   The markdown stays ordinary Obsidian links, so they also work in the editor and in backlinks.
 > - Annotation display: **Under the card** (upstream) or **Tooltip on hover** -- the `: ` lines are
 >   hidden behind a small icon on the card; hover the card to read them, click the icon (tap on
->   mobile) to edit. Needs **Inline annotations** on.
+>   mobile) to edit. Needs **Inline annotations** on. The speech-bubble button in the map's header (or
+>   the command "Toggle annotation display") switches between the two.
+> - **Add theme (new # heading)** in the root's menu (and as a command) appends an empty `# ` heading to
+>   name in place. With two or more H1s the file name becomes the root and each H1 a top-level branch.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
 >   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
 >   child. It is now written as a heading one level below the parent. "Add child" had the same bug.

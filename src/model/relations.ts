@@ -20,28 +20,67 @@ export interface Relation {
 	fromId: string;
 	toId: string;
 	label: string | null;
+	/** Which of the source's links into this note it is, counting from 0. */
+	linkIndex: number;
+}
+
+/** The pieces of one `[[note#subpath|label]]`, as written. */
+export interface LocalLinkParts {
+	note: string;
+	subpath: string;
+	label: string | null;
 }
 
 /** `[[note#subpath|label]]`, not preceded by `!` (an embed). */
 const LINK = /(!?)\[\[([^\]|#]*)#([^\]|]+)(?:\|([^\]]*))?\]\]/g;
 const BLOCK_ID = /[ \t]\^([A-Za-z0-9-]+)$/;
 
-/** Links in `text` that point into the note called `noteName`. */
-export function linksIn(text: string, noteName: string): InternalLink[] {
-	const out: InternalLink[] = [];
+function isLocal(note: string, noteName: string): boolean {
+	return note.trim() === "" || note.trim().toLowerCase() === noteName.toLowerCase();
+}
+
+/**
+ * Links in `text` that point into the note called `noteName`. `index` counts
+ * every such link in order, so it is the same number `rewriteLocalLink` takes.
+ */
+export function linksIn(text: string, noteName: string): Array<InternalLink & { index: number }> {
+	const out: Array<InternalLink & { index: number }> = [];
+	let index = -1;
 	for (const m of text.matchAll(LINK)) {
 		const [, bang, note, subpath, rawLabel] = m;
-		if (bang) continue;
-		if (note.trim() !== "" && note.trim().toLowerCase() !== noteName.toLowerCase()) continue;
+		if (bang || !isLocal(note, noteName)) continue;
+		index++;
 		const label = rawLabel === undefined || rawLabel.trim() === "" ? null : rawLabel.trim();
 		if (subpath.startsWith("^")) {
-			out.push({ kind: "block", id: subpath.slice(1), label });
+			out.push({ kind: "block", id: subpath.slice(1), label, index });
 			continue;
 		}
 		const heading = subpath.split("#").filter((s) => s.trim() !== "").at(-1)?.trim();
-		if (heading) out.push({ kind: "heading", heading, label });
+		if (heading) out.push({ kind: "heading", heading, label, index });
 	}
 	return out;
+}
+
+/**
+ * `text` with its `index`-th link into this note replaced by what `replace`
+ * returns ("" removes it), spacing tidied. Unchanged when there is no such link.
+ */
+export function rewriteLocalLink(
+	text: string,
+	noteName: string,
+	index: number,
+	replace: (link: LocalLinkParts) => string,
+): string {
+	let seen = -1;
+	let hit = false;
+	const out = text.replace(LINK, (whole, bang: string, note: string, subpath: string, rawLabel?: string) => {
+		if (bang || !isLocal(note, noteName)) return whole;
+		seen++;
+		if (seen !== index) return whole;
+		hit = true;
+		return replace({ note, subpath, label: rawLabel ?? null });
+	});
+	return hit ? out.replace(/[ \t]{2,}/g, " ").trim() : text;
 }
 
 /** The block id a line ends with (` ^abc`), or null. */
@@ -85,7 +124,7 @@ export function resolveRelations(parsed: ParsedDoc, noteName: string): Relation[
 			const key = `${node.id}>${target.id}>${link.label ?? ""}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push({ fromId: node.id, toId: target.id, label: link.label });
+			out.push({ fromId: node.id, toId: target.id, label: link.label, linkIndex: link.index });
 		}
 	}
 	return out;
@@ -94,11 +133,9 @@ export function resolveRelations(parsed: ParsedDoc, noteName: string): Relation[
 /** `text` with every link into this note removed, spacing tidied. */
 export function stripInternalLinks(text: string, noteName: string): string {
 	return text
-		.replace(LINK, (whole, bang: string, note: string) => {
-			if (bang) return whole;
-			const local = note.trim() === "" || note.trim().toLowerCase() === noteName.toLowerCase();
-			return local ? "" : whole;
-		})
+		.replace(LINK, (whole, bang: string, note: string) =>
+			bang || !isLocal(note, noteName) ? whole : "",
+		)
 		.replace(/[ \t]{2,}/g, " ")
 		.trim();
 }

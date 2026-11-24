@@ -1027,6 +1027,24 @@ button.is-recording {
 	opacity: 0.85;
 }
 
+/* The wide invisible stroke is what takes the click; the edge layer itself does not. */
+.mm-relation-hit {
+	stroke: transparent;
+	stroke-width: 14;
+	pointer-events: stroke;
+	cursor: pointer;
+}
+
+.mm-relation-group:hover .mm-relation {
+	stroke-width: 2.5;
+	opacity: 1;
+}
+
+.mm-relation-group .mm-relation-label {
+	pointer-events: auto;
+	cursor: pointer;
+}
+
 .mm-relation-arrow {
 	fill: var(--text-accent);
 }
@@ -1067,4 +1085,38 @@ button.is-recording {
 .mm-annotation-badge svg {
 	width: 14px;
 	height: 14px;
+}
+
+/* --- custom fork: picking a relation target on the map ---------------------- */
+
+.mm-pick-banner {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 16;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: calc(100% - 24px);
+	padding: 6px 8px 6px 12px;
+	border-radius: 8px;
+	background: var(--background-secondary);
+	border: 1px solid var(--interactive-accent);
+	box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+	font-size: var(--font-ui-small);
+}
+
+.mm-viewport.is-picking-relation .mm-card {
+	cursor: crosshair;
+}
+
+.mm-viewport.is-picking-relation .mm-card:hover {
+	outline: 2px dashed var(--interactive-accent);
+	outline-offset: 2px;
+}
+
+.mm-node.is-relation-source .mm-card {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
 }

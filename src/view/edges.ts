@@ -192,20 +192,31 @@ export function renderRelations(
 	const frag = createFragment();
 	frag.appendChild(defs);
 	let drawn = 0;
-	for (const rel of relations) {
+	relations.forEach((rel, index) => {
 		const a = byId.get(rel.fromId);
 		const b = byId.get(rel.toId);
-		if (!a || !b) continue;
+		if (!a || !b) return;
 		const g = relationGeometry(
 			{ x: a.x, y: a.y, w: a.cardWidth, h: a.cardHeight },
 			{ x: b.x, y: b.y, w: b.cardWidth, h: b.cardHeight },
 		);
+		// One group per relation, carrying its index: the line, a wide invisible
+		// stroke that is what the pointer actually hits, and the label.
+		const group = createSvg("g");
+		group.addClass("mm-relation-group");
+		group.setAttribute("data-relation", String(index));
 		const path = createSvg("path");
 		path.setAttribute("d", g.d);
 		path.setAttribute("fill", "none");
 		path.setAttribute("marker-end", `url(#${markerId})`);
 		path.addClass("mm-relation");
-		frag.appendChild(path);
+		group.appendChild(path);
+		const hit = createSvg("path");
+		hit.setAttribute("d", g.d);
+		hit.setAttribute("fill", "none");
+		hit.addClass("mm-relation-hit");
+		group.appendChild(hit);
+		frag.appendChild(group);
 		if (rel.label) {
 			const text = createSvg("text");
 			text.setAttribute("x", String(Math.round(g.label[0])));
@@ -214,10 +225,10 @@ export function renderRelations(
 			text.setAttribute("dominant-baseline", "middle");
 			text.addClass("mm-relation-label");
 			text.textContent = rel.label;
-			frag.appendChild(text);
+			group.appendChild(text);
 		}
 		drawn++;
-	}
+	});
 	svg.appendChild(frag);
 	return drawn;
 }

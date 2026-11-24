@@ -103,6 +103,23 @@ export default class MindmapPlugin extends Plugin {
 			},
 		});
 
+		// Custom fork: annotations under the card <-> as tooltips.
+		this.addCommand({
+			id: "toggle-annotation-display",
+			name: "Toggle annotation display (under card / tooltip)",
+			callback: () => void this.toggleAnnotationDisplay(),
+		});
+		// Custom fork: a new `# ` theme at the end of the note.
+		this.addCommand({
+			id: "add-theme",
+			name: "Add theme (new # heading)",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MindmapView);
+				if (!view) return false;
+				if (!checking) view.addThemeToNote();
+				return true;
+			},
+		});
 		// Custom fork: drop the manual left/right split and go back to splitting by weight.
 		this.addCommand({
 			id: "reset-sides",
@@ -271,6 +288,15 @@ export default class MindmapPlugin extends Plugin {
 		// the one object `DEFAULT_SETTINGS` holds -- and the first rebinding would
 		// write itself into the defaults every other reader compares against.
 		this.settings = { ...merged, shortcuts: { ...merged.shortcuts } };
+	}
+
+	/** Custom fork: flip how annotations show, for every open map. */
+	async toggleAnnotationDisplay(): Promise<void> {
+		const next = this.settings.annotationDisplay === "tooltip" ? "inline" : "tooltip";
+		this.settings.annotationDisplay = next;
+		await this.saveSettings();
+		this.refreshAllViews();
+		new Notice(next === "tooltip" ? "Annotations: tooltip on hover" : "Annotations: under the card");
 	}
 
 	async saveSettings(): Promise<void> {

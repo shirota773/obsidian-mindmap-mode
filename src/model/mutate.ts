@@ -10,7 +10,14 @@ import {
 } from "./releveling.ts";
 import type { NodeSpec } from "./releveling.ts";
 import { annotationText } from "./annotations.ts";
-import { blockIdOf, isLinkableHeading, stripInternalLinks, withoutBlockId } from "./relations.ts";
+import {
+	blockIdOf,
+	isLinkableHeading,
+	rewriteLocalLink,
+	stripInternalLinks,
+	withoutBlockId,
+} from "./relations.ts";
+import type { LocalLinkParts } from "./relations.ts";
 
 export interface Mutation {
 	/** Full document text after the edit. */
@@ -496,7 +503,7 @@ export function addRelation(
 	if (from === to || from.virtual || from.lineStart < 0 || to.virtual || to.lineStart < 0) {
 		return unchanged(parsed);
 	}
-	const alias = label && label.trim() !== "" ? `|${label.trim().replace(/[\]|]/g, "")}` : "";
+	const alias = aliasFor(label);
 
 	let doc = parsed.doc;
 	let link: string;
@@ -514,6 +521,62 @@ export function addRelation(
 	}
 	doc = replaceLine(doc, from.lineStart, renderNodeLine(from, withLink(from.text, link)));
 	return done(doc, from.lineStart);
+}
+
+/** `|label` as a link alias, or "" for none. `]` and `|` would end the link early. */
+function aliasFor(label: string | null): string {
+	const clean = label?.trim().replace(/[\]|]/g, "") ?? "";
+	return clean === "" ? "" : `|${clean}`;
+}
+
+function rewriteRelation(
+	parsed: ParsedDoc,
+	node: MindNode,
+	linkIndex: number,
+	noteName: string,
+	replace: (link: LocalLinkParts) => string,
+): Mutation {
+	if (node.virtual || node.lineStart < 0) return unchanged(parsed);
+	const text = rewriteLocalLink(node.text, noteName, linkIndex, replace);
+	if (text === node.text) return unchanged(parsed);
+	return done(replaceLine(parsed.doc, node.lineStart, renderNodeLine(node, text)), node.lineStart);
+}
+
+/** Take one relation -- the `linkIndex`-th link into this note -- out of `node`. */
+export function removeRelation(parsed: ParsedDoc, node: MindNode, linkIndex: number, noteName = ""): Mutation {
+	return rewriteRelation(parsed, node, linkIndex, noteName, () => "");
+}
+
+/** Give one relation a new label, or none. */
+export function relabelRelation(
+	parsed: ParsedDoc,
+	node: MindNode,
+	linkIndex: number,
+	label: string | null,
+	noteName = "",
+): Mutation {
+	return rewriteRelation(parsed, node, linkIndex, noteName, (l) => `[[${l.note}#${l.subpath}${aliasFor(label)}]]`);
+}
+
+/**
+ * Whether the map can take another theme -- a new H1 beside the existing ones.
+ * Only when there is an H1 to stand beside: in a note of bare lists or H2s, a
+ * first H1 would swallow everything below it instead.
+ */
+export function canAddTheme(parsed: ParsedDoc): boolean {
+	const root = parsed.root;
+	if (!root.virtual) return root.kind === "root" && root.level === 1 && root.lineStart >= 0;
+	return root.children.some((c) => c.kind === "heading" && c.level === 1);
+}
+
+/** Append an empty H1 at the end of the note, to be named in place. */
+export function addTheme(parsed: ParsedDoc, text = ""): Mutation {
+	if (!canAddTheme(parsed)) return unchanged(parsed);
+	const lines = parsed.doc.lines;
+	let insertAt = lines.length;
+	while (insertAt > parsed.bodyStart && isBlank(lines[insertAt - 1])) insertAt--;
+	const { block, offset } = padBlock(lines, insertAt, [`# ${text}`], true);
+	return done(spliceLines(parsed.doc, insertAt, 0, block), insertAt + offset);
 }
 
 /** Take every relation `node` starts out of its title. */

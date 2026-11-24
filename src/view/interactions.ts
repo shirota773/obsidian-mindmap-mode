@@ -41,6 +41,11 @@ export interface MapController {
 	openLink(href: string, ev: MouseEvent): void;
 	/** The node's own menu, at the pointer. */
 	showMenu(id: string, ev: MouseEvent): void;
+	/** Custom fork: the menu for one relation line, by its index in the drawn list. */
+	showRelationMenu(index: number, ev: MouseEvent): void;
+	/** Custom fork: "Add relation…" is waiting for its target to be clicked. */
+	isPickingRelation(): boolean;
+	pickRelationTarget(id: string): void;
 	navigate(direction: Direction): void;
 
 	openSearch(): void;
@@ -97,6 +102,14 @@ function kindFrom(target: HTMLElement): string | null {
 	return target.closest<HTMLElement>(".mm-node")?.dataset.kind ?? null;
 }
 
+/** Custom fork: the relation a pointer target belongs to, or null. */
+function relationIndexFrom(target: Element | null): number | null {
+	const raw = target?.closest?.("[data-relation]")?.getAttribute("data-relation");
+	if (raw == null) return null;
+	const index = Number(raw);
+	return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
 export function attachInteractions(controller: MapController): () => void {
 	const { canvas } = controller;
 	const viewport = canvas.viewport;
@@ -119,6 +132,23 @@ export function attachInteractions(controller: MapController): () => void {
 	// --- clicking ------------------------------------------------------------
 	on(viewport, "click", (ev) => {
 		const target = ev.target as HTMLElement;
+
+		// Custom fork: while picking a relation target, a card click is the pick.
+		// Blank canvas does nothing, so a pan never cancels the pick by accident.
+		if (controller.isPickingRelation()) {
+			ev.stopPropagation();
+			const id = nodeIdFrom(target);
+			if (id) controller.pickRelationTarget(id);
+			return;
+		}
+
+		// Custom fork: a relation line is clicked like a card is right-clicked.
+		const relation = relationIndexFrom(target);
+		if (relation !== null) {
+			ev.stopPropagation();
+			controller.showRelationMenu(relation, ev);
+			return;
+		}
 
 		// A link opens from any card. Dragging a node by one still works: only a
 		// press that never became a drag arrives here as a click.
@@ -375,6 +405,8 @@ export function attachInteractions(controller: MapController): () => void {
 		// whatever the last drag left owing is owed no longer.
 		gate.pointerDown();
 		if (ev.button !== 0 || controller.isEditing()) return;
+		// Custom fork: no node drag while a click is picking a relation target.
+		if (controller.isPickingRelation()) return;
 		const target = ev.target as HTMLElement;
 		if (target.closest(".mm-tools, .mm-checkbox, .mm-annotation-badge")) return;
 		const card = target.closest<HTMLElement>(".mm-card");
@@ -440,6 +472,13 @@ export function attachInteractions(controller: MapController): () => void {
 		// A node being edited is a text field, and it keeps the platform's own
 		// menu -- cut, copy, paste, spelling.
 		if (controller.isEditing()) return;
+		const relation = relationIndexFrom(ev.target as Element | null);
+		if (relation !== null) {
+			ev.preventDefault();
+			endDrag();
+			controller.showRelationMenu(relation, ev);
+			return;
+		}
 		const id = nodeIdFrom(ev.target);
 		// Blank canvas keeps the platform menu too; a card gets the map's own.
 		if (!id) return;
