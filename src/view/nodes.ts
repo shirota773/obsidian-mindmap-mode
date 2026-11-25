@@ -141,6 +141,8 @@ export interface NodeElementOptions {
 	annotation: string | null;
 	/** Custom fork: show the annotation as a hover tooltip behind an icon. */
 	annotationAsTooltip: boolean;
+	/** Custom fork: when and where that tooltip opens. */
+	tooltip: { delay: number; placement: "top" | "bottom" | "left" | "right" };
 	/** Custom fork: the node's tags, drawn as chips on the card instead of title text. */
 	tags: string[];
 	/** Both caps from `nodeMaxWidth`: the node box, and the card's own text. */
@@ -308,7 +310,9 @@ export function buildNodeElement(
 		setIcon(badge, "message-square-text");
 		if (!badge.firstElementChild) badge.setText("💬");
 		setTooltip(card, opts.annotation.trim() === "" ? "(empty annotation)" : opts.annotation, {
-			placement: "top",
+			placement: opts.tooltip.placement,
+			// Obsidian reads 0 as "not set" and waits its default second instead.
+			delay: Math.max(1, opts.tooltip.delay),
 			// Themed rather than Obsidian's default black (1.8.7+; older ignores it).
 			classes: ["mm-annotation-tip"],
 		});

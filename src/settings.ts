@@ -43,6 +43,10 @@ export interface MindmapSettings {
 	inlineAnnotations: boolean;
 	/** Custom fork: draw annotations as a strip under the card, or as a hover tooltip. */
 	annotationDisplay: "inline" | "tooltip";
+	/** Custom fork: how long (ms) the pointer rests on a card before its tooltip shows. */
+	tooltipDelay: number;
+	/** Custom fork: which side of the card the tooltip opens on. */
+	tooltipPlacement: "top" | "bottom" | "left" | "right";
 	maxNodeWidth: number;
 	horizontalGap: number;
 	verticalGap: number;
@@ -72,6 +76,8 @@ export const DEFAULT_SETTINGS: MindmapSettings = {
 	showBodyNodes: true,
 	inlineAnnotations: true,
 	annotationDisplay: "inline",
+	tooltipDelay: 150,
+	tooltipPlacement: "top",
 	maxNodeWidth: 340,
 	horizontalGap: 64,
 	verticalGap: 14,
@@ -253,6 +259,20 @@ const GROUPS: SettingGroup[] = [
 					type: "dropdown",
 					key: "annotationDisplay",
 					options: { inline: "Under the card", tooltip: "Tooltip on hover" },
+				},
+			},
+			{
+				name: "Tooltip delay",
+				desc: "How long, in milliseconds, the pointer rests on a card before its annotation tooltip appears. 0 shows it at once.",
+				control: { type: "slider", key: "tooltipDelay", min: 0, max: 1500, step: 50 },
+			},
+			{
+				name: "Tooltip position",
+				desc: "Which side of the card the annotation tooltip opens on.",
+				control: {
+					type: "dropdown",
+					key: "tooltipPlacement",
+					options: { top: "Above", bottom: "Below", left: "Left", right: "Right" },
 				},
 			},
 			{

@@ -46,6 +46,8 @@
 >   (`#tag #hoge`), are drawn as chips on that node's card instead of title text or a content card.
 >   Clicking a chip searches the vault for that tag. The note itself is unchanged.
 > - The annotation tooltip uses the theme's colours (a light tint of the accent) instead of black.
+>   **Tooltip delay** (default 150 ms, Obsidian's own is about a second) and **Tooltip position** are
+>   settings.
 > - The Layout setting is now **Default placement**: where branches start (both sides by size, or all on
 >   the right) until one is dragged across. Maps are always drawn on both sides, so dragging always works.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
