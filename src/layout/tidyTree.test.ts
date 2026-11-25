@@ -34,6 +34,7 @@ function mindNode(text: string): MindNode {
 		blockEnd: counter,
 		bodyRanges: [],
 		annotationIndices: [],
+		tagIndices: [],
 		children: [],
 		parent: null,
 	};

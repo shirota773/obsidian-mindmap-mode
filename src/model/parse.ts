@@ -1,3 +1,4 @@
+import { partitionTags } from "./tags.ts";
 import { fromText, isBlank, toText } from "./lines.ts";
 import { isAnnotationLine, partitionAnnotations } from "./annotations.ts";
 import { DEFAULT_PARSE_OPTIONS, indentWidthOf } from "./types.ts";
@@ -53,6 +54,7 @@ function makeNode(kind: NodeKind, parent: MindNode | null): MindNode {
 		blockEnd: -1,
 		bodyRanges: [],
 		annotationIndices: [],
+		tagIndices: [],
 		children: [],
 		parent,
 	};
@@ -241,6 +243,7 @@ export function parseMarkdown(
 	dropBlankBodyRanges(root, lines);
 	const promoted = promoteRoot(root, opts, lines);
 	partitionAnnotations(promoted, annotationLines, lines);
+	partitionTags(promoted, lines);
 	computeBlockEnd(promoted, lines);
 
 	const byId = new Map<string, MindNode>();

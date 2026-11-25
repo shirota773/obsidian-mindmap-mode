@@ -1143,3 +1143,47 @@ button.is-recording {
 	border-style: dashed;
 	opacity: 0.85;
 }
+
+/* --- custom fork: tags as chips on the card --------------------------------- */
+
+.mm-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 5px 0 2px;
+}
+
+.mm-tag {
+	padding: 0 7px;
+	border-radius: var(--tag-radius, 999px);
+	background: var(--tag-background, hsla(var(--interactive-accent-hsl), 0.1));
+	color: var(--tag-color, var(--text-accent));
+	font-size: var(--font-ui-smaller);
+	line-height: 1.6;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.mm-tag:hover {
+	background: var(--tag-background-hover, hsla(var(--interactive-accent-hsl), 0.2));
+}
+
+/* --- custom fork: annotation tooltip in the theme's colours ----------------- */
+
+/* Not white (it would vanish into the canvas) and not the default black: a
+   light tint of the accent, with the theme's text colour and a fine border. */
+.tooltip.mm-annotation-tip {
+	--mm-tip-bg: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
+	--background-modifier-message: var(--mm-tip-bg);
+	background-color: var(--mm-tip-bg);
+	color: var(--text-normal);
+	border: 1px solid color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+	box-shadow: var(--shadow-s);
+	max-width: 320px;
+	white-space: pre-wrap;
+	text-align: left;
+}
+
+.tooltip.mm-annotation-tip .tooltip-arrow {
+	--background-modifier-message: var(--mm-tip-bg);
+}

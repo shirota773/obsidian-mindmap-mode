@@ -63,6 +63,8 @@ export interface MapController {
 	endMapDrag(): void;
 	/** Custom fork: the menu for empty canvas. */
 	showCanvasMenu(ev: MouseEvent): void;
+	/** Custom fork: a tag chip was clicked. */
+	searchTag(tag: string): void;
 
 	undo(): void;
 	redo(): void;
@@ -144,6 +146,14 @@ export function attachInteractions(controller: MapController): () => void {
 			ev.stopPropagation();
 			const id = nodeIdFrom(target);
 			if (id) controller.pickRelationTarget(id);
+			return;
+		}
+
+		// Custom fork: a tag chip searches for its tag.
+		const chip = target.closest<HTMLElement>(".mm-tag[data-tag]");
+		if (chip?.dataset.tag) {
+			ev.stopPropagation();
+			controller.searchTag(chip.dataset.tag);
 			return;
 		}
 
@@ -431,7 +441,7 @@ export function attachInteractions(controller: MapController): () => void {
 		// Custom fork: no node drag while a click is picking a relation target.
 		if (controller.isPickingRelation()) return;
 		const target = ev.target as HTMLElement;
-		if (target.closest(".mm-tools, .mm-checkbox, .mm-annotation-badge")) return;
+		if (target.closest(".mm-tools, .mm-checkbox, .mm-annotation-badge, .mm-tag")) return;
 		const card = target.closest<HTMLElement>(".mm-card");
 		// A body card stands for lines the note owns, not a node that can be
 		// reparented, so it never starts a drag.

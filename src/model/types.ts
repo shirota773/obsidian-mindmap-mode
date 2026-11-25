@@ -55,6 +55,8 @@ export interface MindNode {
 	bodyRanges: Array<[number, number]>;
 	/** Indices of body ranges rendered under this node's title as annotations. */
 	annotationIndices: number[];
+	/** Custom fork: indices of body ranges that hold only tag lines (shown as chips). */
+	tagIndices: number[];
 
 	children: MindNode[];
 	parent: MindNode | null;

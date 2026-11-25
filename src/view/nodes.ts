@@ -1,5 +1,6 @@
 import { setIcon, setTooltip } from "obsidian";
 import { stripInternalLinks, withoutBlockId } from "../model/relations.ts";
+import { withoutTags } from "../model/tags.ts";
 
 import type { LayoutNode } from "../layout/tidyTree.ts";
 import { nextInlineToken } from "../model/inlineText.ts";
@@ -140,6 +141,8 @@ export interface NodeElementOptions {
 	annotation: string | null;
 	/** Custom fork: show the annotation as a hover tooltip behind an icon. */
 	annotationAsTooltip: boolean;
+	/** Custom fork: the node's tags, drawn as chips on the card instead of title text. */
+	tags: string[];
 	/** Both caps from `nodeMaxWidth`: the node box, and the card's own text. */
 	maxWidth: NodeMaxWidth;
 	branchColors: boolean;
@@ -232,7 +235,18 @@ export function buildNodeElement(
 		// title is still what the editor opens with.
 		const shown = stripInternalLinks(withoutBlockId(node.text), "");
 		if (shown !== withoutBlockId(node.text).trim()) el.addClass("has-relation");
-		hasMath = renderInline(text, shown);
+		hasMath = renderInline(text, opts.tags.length > 0 ? withoutTags(shown) : shown);
+	}
+	// Custom fork: tags hang below the card as chips, like the annotation strip
+	// (which comes after them): beside the title they would make the card long.
+	// The row is part of the node box, so siblings are spaced around it.
+	// Clicking a chip searches for its tag.
+	if (opts.tags.length > 0) {
+		const chips = el.createDiv({ cls: "mm-tags" });
+		for (const tag of opts.tags) {
+			// No aria-label: Obsidian turns one into a tooltip of its own on hover.
+			chips.createSpan({ cls: "mm-tag", text: `#${tag}`, attr: { "data-tag": tag } });
+		}
 	}
 
 	// Inside the card, not beside it. `canPan` already lets a pointerdown on
@@ -295,6 +309,8 @@ export function buildNodeElement(
 		if (!badge.firstElementChild) badge.setText("💬");
 		setTooltip(card, opts.annotation.trim() === "" ? "(empty annotation)" : opts.annotation, {
 			placement: "top",
+			// Themed rather than Obsidian's default black (1.8.7+; older ignores it).
+			classes: ["mm-annotation-tip"],
 		});
 	} else if (opts.annotation !== null) {
 		el.addClass("has-annotation");

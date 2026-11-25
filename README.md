@@ -42,6 +42,10 @@
 >   Double-click opens the note; its menu removes the map from the canvas.
 > - Right-click empty canvas for a menu: add a theme or another note's map there, fit, expand/collapse
 >   all, switch annotation display, reset left/right placement or map positions.
+> - Tags as chips: `#tags` in a node's title, and a line of nothing but tags under a heading
+>   (`#tag #hoge`), are drawn as chips on that node's card instead of title text or a content card.
+>   Clicking a chip searches the vault for that tag. The note itself is unchanged.
+> - The annotation tooltip uses the theme's colours (a light tint of the accent) instead of black.
 > - The Layout setting is now **Default placement**: where branches start (both sides by size, or all on
 >   the right) until one is dragged across. Maps are always drawn on both sides, so dragging always works.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping

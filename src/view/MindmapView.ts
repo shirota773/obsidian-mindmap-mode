@@ -63,6 +63,7 @@ import { createEdgeLayer, renderEdges, renderRelations } from "./edges.ts";
 import { resolveRelations, withoutBlockId } from "../model/relations.ts";
 import { NotePickerModal, RelationLabelModal, RelationTargetModal, breadcrumb } from "./relationDialog.ts";
 import { linkTargetsIn, reidentify } from "./linkedMaps.ts";
+import { nodeTags } from "../model/tags.ts";
 import { MINDMAP_ICON } from "../icon.ts";
 import type { Relation } from "../model/relations.ts";
 import { buildNodeElement } from "./nodes.ts";
@@ -1123,7 +1124,7 @@ export class MindmapView extends TextFileView implements MapController {
 		}));
 
 		node.bodyRanges.forEach((range, index) => {
-			if (node.annotationIndices.includes(index)) return;
+			if (node.annotationIndices.includes(index) || node.tagIndices.includes(index)) return;
 			const body = this.makeBodyNode(parsed, node, range, index);
 			merged.push({ line: range[0], node: body });
 		});
@@ -1157,6 +1158,7 @@ export class MindmapView extends TextFileView implements MapController {
 			blockEnd: range[1],
 			bodyRanges: [],
 			annotationIndices: [],
+			tagIndices: [],
 			children: [],
 			// Kept for `revealAncestors`; `owner.children` is never touched, so the
 			// parsed tree stays exactly as the parser left it.
@@ -1277,6 +1279,7 @@ export class MindmapView extends TextFileView implements MapController {
 			const element = buildNodeElement(this.nodeLayer, layout, {
 				annotation: hasAnnotation ? annotationText(this.docFor(node.id), node) : null,
 				annotationAsTooltip: asTooltip,
+				tags: isBody ? [] : nodeTags(node, this.docFor(node.id).doc.lines),
 				// A tooltip takes no room, so the card is sized as if it had none.
 				maxWidth: nodeMaxWidth(node.kind, hasAnnotation && !asTooltip, s.maxNodeWidth),
 				branchColors: s.branchColors,
@@ -2361,6 +2364,16 @@ export class MindmapView extends TextFileView implements MapController {
 	}
 
 	// --- custom fork: other notes' maps on this canvas -------------------------
+
+	/** Custom fork: a tag chip opens Obsidian's search for that tag. */
+	searchTag(tag: string): void {
+		const query = `tag:#${tag}`;
+		const search = (this.app as unknown as {
+			internalPlugins?: { getPluginById?: (id: string) => { instance?: { openGlobalSearch?: (q: string) => void } } | null };
+		}).internalPlugins?.getPluginById?.("global-search")?.instance;
+		if (search?.openGlobalSearch) search.openGlobalSearch(query);
+		else new Notice(`Search for ${query}`);
+	}
 
 	/** The parse a drawn node belongs to: a linked note's, or this note's. */
 	private docFor(id: string): ParsedDoc {

@@ -56,5 +56,5 @@ export function annotationText(parsed: ParsedDoc, node: MindNode): string {
 }
 
 export function bodyCardCount(node: MindNode): number {
-	return node.bodyRanges.length - node.annotationIndices.length;
+	return node.bodyRanges.length - node.annotationIndices.length - node.tagIndices.length;
 }
