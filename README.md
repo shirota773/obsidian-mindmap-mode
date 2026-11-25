@@ -31,8 +31,17 @@
 >   hidden behind a small icon on the card; hover the card to read them, click the icon (tap on
 >   mobile) to edit. Needs **Inline annotations** on. The speech-bubble button in the map's header (or
 >   the command "Toggle annotation display") switches between the two.
-> - **Add theme (new # heading)** in the root's menu (and as a command) appends an empty `# ` heading to
->   name in place. With two or more H1s the file name becomes the root and each H1 a top-level branch.
+> - Several maps on one canvas: with two or more `# ` headings, each is a map of its own (the file name
+>   is no longer the root above them). Drag a map's root card to move the whole map; positions, and each
+>   map's left/right placement, are saved per note in `data.json`. A branch can be dropped into another
+>   map's first-level column. **Add theme (new # heading)** in a map root's menu, the canvas menu
+>   ("Add theme here") or the command appends an empty `# ` heading to name in place.
+> - Other notes' maps: "Show map of … here" in a node's menu (for each note it links to) or "Show map of
+>   another note here…" in the canvas menu draws that note's map beside this one -- read-only, movable,
+>   foldable, joined by a dashed line to the node that links to it, and updated when that note changes.
+>   Double-click opens the note; its menu removes the map from the canvas.
+> - Right-click empty canvas for a menu: add a theme or another note's map there, fit, expand/collapse
+>   all, switch layout and annotation display, reset left/right placement or map positions.
 > - Fix: appending a list item as the last child of a parent whose last child is a heading (e.g. dropping
 >   it on the root) wrote `- item` at the end of that heading's section, so it re-parsed as the heading's
 >   child. It is now written as a heading one level below the parent. "Add child" had the same bug.

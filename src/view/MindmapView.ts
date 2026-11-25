@@ -1,10 +1,9 @@
-import { Keymap, Menu, Notice, Platform, Scope, TextFileView, setIcon } from "obsidian";
+import { Keymap, Menu, Notice, Platform, Scope, TFile, TextFileView, setIcon } from "obsidian";
 import type {
 	KeymapContext,
 	KeymapEventHandler,
 	KeymapEventListener,
 	Modifier,
-	TFile,
 	WorkspaceLeaf,
 } from "obsidian";
 
@@ -61,15 +60,18 @@ import type { CullPlan, ViewBox } from "./culling.ts";
 import { needsRepaint } from "./refresh.ts";
 import { Perf } from "./perf.ts";
 import { createEdgeLayer, renderEdges, renderRelations } from "./edges.ts";
-import { resolveRelations } from "../model/relations.ts";
-import { RelationLabelModal, RelationTargetModal, breadcrumb } from "./relationDialog.ts";
+import { resolveRelations, withoutBlockId } from "../model/relations.ts";
+import { NotePickerModal, RelationLabelModal, RelationTargetModal, breadcrumb } from "./relationDialog.ts";
+import { linkTargetsIn, reidentify } from "./linkedMaps.ts";
 import type { Relation } from "../model/relations.ts";
 import { buildNodeElement } from "./nodes.ts";
 import type { NodeElement } from "./nodes.ts";
 import { nodeMaxWidth } from "./nodeWidth.ts";
 import { attachInteractions } from "./interactions.ts";
 import { encodeSplit, placeOnSide, resolveSplit } from "./sides.ts";
-import type { SideSplit } from "../foldStore.ts";
+import type { SavedMapPosition, SideSplit } from "../foldStore.ts";
+import { layoutForest } from "./forest.ts";
+import type { Point } from "./forest.ts";
 import type { SideSign } from "./sides.ts";
 import { SHORTCUTS, comboToString, resolveBindings } from "./shortcuts.ts";
 import type { KeyCombo, ShortcutBindings } from "./shortcuts.ts";
@@ -188,6 +190,20 @@ const DENSE_NODE_COUNT = 300;
  * What asked for the work, carried into the timing log so a slow map can be
  * read as "typing is slow" rather than as a list of milliseconds.
  */
+/** Custom fork: a `# ` heading, which heads a map of its own when there are several. */
+function isTheme(node: MindNode): boolean {
+	return node.kind === "heading" && node.level === 1;
+}
+
+function walkLayout(root: LayoutNode, visit: (l: LayoutNode) => void): void {
+	const stack = [root];
+	while (stack.length > 0) {
+		const l = stack.pop() as LayoutNode;
+		visit(l);
+		stack.push(...l.children);
+	}
+}
+
 export type PaintReason =
 	| "edit"
 	| "fold"
@@ -284,11 +300,36 @@ export class MindmapView extends TextFileView implements MapController {
 	 * in balanced layout, or undefined to split by weight. Saved with the fold
 	 * state, and re-read against every parse (`settleSplit`).
 	 */
-	private sideSplit: SideSplit | undefined = undefined;
-	/** A count `moveToSide` chose, to be tied to branch keys once the note re-parses. */
-	private pendingRight: number | undefined = undefined;
-	/** The split the current paint lays out with: `sideSplit` resolved. */
-	private splitNow: number | undefined = undefined;
+	private sideSplits: SideSplit[] = [];
+	/** A count `moveToSide` chose for one map, to be tied to branch keys once the note re-parses. */
+	private pendingRight: { map: string; count: number } | undefined = undefined;
+	/** Per map root id: the split the current paint lays out with. */
+	private splitNow = new Map<string, number | undefined>();
+	/**
+	 * Custom fork: the maps on the canvas as last painted -- the note's root, or
+	 * one per `# ` heading -- and the file-name root kept out of sight when every
+	 * branch is a map of its own.
+	 */
+	private mapRoots: LayoutNode[] = [];
+	private ghostRoot: LayoutNode | null = null;
+	/** Saved map positions, by map name; undefined until a map is moved. */
+	private mapPositions: SavedMapPosition[] | undefined = undefined;
+	/** Where the last layout put every map, in map space. */
+	private mapPositionsNow: SavedMapPosition[] = [];
+	/** What map space was shifted by onto the canvas, for keeping the camera steady. */
+	private mapShift: Point | null = null;
+	/** Where "Add theme here" wants the next new map. */
+	private pendingMapAt: Point | null = null;
+	/** The map being dragged and where its root started, in map space. */
+	private mapDrag: { name: string; from: Point } | null = null;
+	/** Custom fork: other notes whose maps are on this canvas, by path, and their parses. */
+	private linkedMaps: string[] = [];
+	private extDocs = new Map<string, ParsedDoc>();
+	/** Which linked note each drawn foreign node belongs to, by node id. */
+	private extOwner = new Map<string, string>();
+	/** Connectors from a node that links to a note to that note's map. */
+	private extRelations: Relation[] = [];
+	private extLoad = 0;
 	/** Custom fork: links between nodes of this note, drawn as dashed arrows. */
 	private relations: Relation[] = [];
 	/** Custom fork: "Add relation…" waiting for its target to be clicked. */
@@ -550,6 +591,7 @@ export class MindmapView extends TextFileView implements MapController {
 			this.layoutNodes = [];
 			this.layoutElements = [];
 			this.paintRoot = null;
+			this.mapShift = null;
 			// Nothing this note's formulas render to is worth keeping for the
 			// next one, and the cache is bounded by dropping it here.
 			clearMathCache();
@@ -592,6 +634,21 @@ export class MindmapView extends TextFileView implements MapController {
 		// should not pay for it at Obsidian startup.
 		void ensureMath();
 		this.detachInteractions = attachInteractions(this);
+		// Custom fork: a linked note's map follows that note.
+		this.registerEvent(this.app.vault.on("modify", (file) => {
+			if (this.linkedMaps.includes(file.path)) void this.loadLinkedMaps();
+		}));
+		this.registerEvent(this.app.vault.on("delete", (file) => {
+			if (this.linkedMaps.includes(file.path)) void this.loadLinkedMaps();
+		}));
+		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+			if (!this.linkedMaps.includes(oldPath)) return;
+			this.linkedMaps = this.linkedMaps.map((p) => (p === oldPath ? file.path : p));
+			this.mapPositions = this.mapPositions?.map((p) =>
+				p.root === `ext:${oldPath}` ? { ...p, root: `ext:${file.path}` } : p,
+			);
+			void this.loadLinkedMaps();
+		}));
 		this.addAction("file-text", "Edit as markdown", () => {
 			void this.plugin.toggleLeaf(this.leaf);
 		});
@@ -887,8 +944,13 @@ export class MindmapView extends TextFileView implements MapController {
 		const parsed = this.parsed;
 		const path = this.file?.path;
 		const saved = parsed && path ? this.plugin.readNoteState(path) : null;
-		this.sideSplit = saved?.split;
+		this.sideSplits = saved?.mapSplits ?? (saved?.split ? [saved.split] : []);
 		this.pendingRight = undefined;
+		this.mapPositions = saved?.maps;
+		this.pendingMapAt = null;
+		this.linkedMaps = saved?.linkedMaps ?? [];
+		this.extDocs = new Map();
+		void this.loadLinkedMaps();
 		if (!parsed || !saved) {
 			this.foldFrom(INITIAL_EXPAND_LEVEL);
 			return;
@@ -951,7 +1013,13 @@ export class MindmapView extends TextFileView implements MapController {
 		if (!this.parsed || !path || !this.plugin.settings.rememberFolds) return;
 
 		const focus = this.selectedNode();
-		if (!focus && this.isDefaultFold() && this.sideSplit === undefined) {
+		if (
+			!focus &&
+			this.isDefaultFold() &&
+			this.sideSplits.length === 0 &&
+			this.mapPositions === undefined &&
+			this.linkedMaps.length === 0
+		) {
 			this.plugin.forgetNoteState(path);
 			return;
 		}
@@ -959,7 +1027,9 @@ export class MindmapView extends TextFileView implements MapController {
 			collapsed: [...this.collapsedKeys],
 			focusKey: focus?.key,
 			focusId: focus?.id,
-			split: this.sideSplit,
+			mapSplits: this.sideSplits.length > 0 ? this.sideSplits : undefined,
+			maps: this.mapPositions,
+			linkedMaps: this.linkedMaps.length > 0 ? this.linkedMaps : undefined,
 		});
 	}
 
@@ -1159,6 +1229,11 @@ export class MindmapView extends TextFileView implements MapController {
 		const showBody = s.showBodyNodes;
 		this.bodyNodes.clear();
 
+		// Custom fork: several `# ` headings are several maps, and the hidden
+		// file-name root above them is never folded away.
+		const forest = this.isForest(parsed);
+		if (forest) this.collapsedKeys.delete(parsed.root.key);
+
 		// Build the tree of visible nodes; a collapsed node contributes no children.
 		const rootLayout = createLayoutNode(parsed.root, null, 0);
 		const visible: LayoutNode[] = [];
@@ -1172,11 +1247,15 @@ export class MindmapView extends TextFileView implements MapController {
 			}
 		};
 		build(parsed.root, rootLayout);
+		this.markMaps(rootLayout, forest);
+		this.addLinkedMaps(visible);
 
 		// Fixed by the note, not by what happens to be unfolded, so the balanced
 		// layout keeps every branch on the side it started on.
-		for (const branch of rootLayout.children) {
-			branch.weight = this.branchWeight(branch.node, showBody);
+		for (const map of this.mapRoots) {
+			for (const branch of map.children) {
+				if (!branch.mapRoot) branch.weight = this.branchWeight(branch.node, showBody);
+			}
 		}
 
 		// What the last paint measured, and where it put it. A card whose text has
@@ -1195,7 +1274,7 @@ export class MindmapView extends TextFileView implements MapController {
 			const hasAnnotation = node.annotationIndices.length > 0;
 			const asTooltip = s.annotationDisplay === "tooltip";
 			const element = buildNodeElement(this.nodeLayer, layout, {
-				annotation: hasAnnotation ? annotationText(parsed, node) : null,
+				annotation: hasAnnotation ? annotationText(this.docFor(node.id), node) : null,
 				annotationAsTooltip: asTooltip,
 				// A tooltip takes no room, so the card is sized as if it had none.
 				maxWidth: nodeMaxWidth(node.kind, hasAnnotation && !asTooltip, s.maxNodeWidth),
@@ -1204,8 +1283,8 @@ export class MindmapView extends TextFileView implements MapController {
 				expandable: isBody,
 				addable: !isBody,
 				collapsed,
-				hasChildren: this.childCount(node, showBody) > 0,
-				hiddenCount: collapsed ? this.hiddenCount(node, showBody) : 0,
+				hasChildren: this.childCount(node, showBody && !this.extOwner.has(node.id)) > 0,
+				hiddenCount: collapsed ? this.hiddenCount(node, showBody && !this.extOwner.has(node.id)) : 0,
 			});
 			this.elements.set(node.id, element);
 			if (element.hasMath) sawMath = true;
@@ -1236,6 +1315,7 @@ export class MindmapView extends TextFileView implements MapController {
 			element.el.addClass("is-offscreen");
 			reused++;
 		}
+		this.tagMaps();
 		this.perf.span("paint-build", started, { reason, nodes: visible.length, reused });
 
 		// On the content layer, not on the view root: the root is the box
@@ -1248,8 +1328,8 @@ export class MindmapView extends TextFileView implements MapController {
 		// makes the browser lay any of it out.
 		this.canvas.content.replaceChildren(this.edgeLayer, this.nodeLayer);
 
-		// Custom fork: the left/right split for this parse, before it is saved.
-		this.settleSplit(rootLayout);
+		// Custom fork: the left/right split of each map for this parse, before it is saved.
+		this.settleSplits();
 
 		// The fold shape and the selection are both final by now, and neither
 		// changes again before the next paint.
@@ -1485,13 +1565,44 @@ export class MindmapView extends TextFileView implements MapController {
 	private layOut(rootLayout: LayoutNode, reason: PaintReason): LayoutResult {
 		const s = this.plugin.settings;
 		const laidOut = this.perf.now();
-		const result = layoutTree(rootLayout, {
+		const base = {
 			mode: s.layout,
-			split: this.splitNow,
 			horizontalGap: s.horizontalGap,
 			verticalGap: s.verticalGap,
 			padding: 60,
-		});
+		};
+		let result: LayoutResult;
+		if (this.mapRoots.length > 1 || this.ghostRoot !== null) {
+			// Custom fork: each map on its own, where the user put it.
+			const forest = layoutForest(
+				this.mapRoots.map((root) => ({
+					root,
+					name: this.mapName(root.node),
+					split: this.splitNow.get(root.node.id),
+				})),
+				base,
+				this.positionsToPlace(),
+				this.ghostRoot,
+			);
+			this.keepCameraOn(forest.shift);
+			this.mapPositionsNow = forest.positions;
+			if (this.mapPositions !== undefined) {
+				// A linked note still loading has no map yet; its saved spot waits for it.
+				const waiting = this.mapPositions.filter(
+					(p) =>
+						p.root.startsWith("ext:") &&
+						this.linkedMaps.includes(p.root.slice(4)) &&
+						!forest.positions.some((q) => q.root === p.root),
+				);
+				this.mapPositions = [...forest.positions, ...waiting];
+			}
+			result = forest;
+		} else {
+			result = layoutTree(rootLayout, { ...base, split: this.splitNow.get(rootLayout.node.id) });
+			// A lone map's space has its root at the origin.
+			this.keepCameraOn({ x: rootLayout.x, y: rootLayout.y });
+			this.mapPositionsNow = [{ root: this.mapName(rootLayout.node), x: 0, y: 0 }];
+		}
 		this.perf.span("paint-layout", laidOut, { reason, nodes: result.nodes.length });
 
 		const written = this.perf.now();
@@ -1728,9 +1839,10 @@ export class MindmapView extends TextFileView implements MapController {
 			this.plugin.settings.branchColors,
 			view,
 		);
-		if (this.relations.length > 0) {
+		const drawn = this.drawnRelations();
+		if (drawn.length > 0) {
 			const byId = new Map(this.layoutNodes.map((n) => [n.node.id, n]));
-			renderRelations(this.edgeLayer, this.relations, byId);
+			renderRelations(this.edgeLayer, drawn, byId);
 		}
 		this.perf.span("edges", started, { paths, whole: view === null });
 		return paths;
@@ -1827,6 +1939,12 @@ export class MindmapView extends TextFileView implements MapController {
 		// the block editor, which rewrites exactly those lines and nothing else.
 		if (this.bodyNodes.has(id)) {
 			this.openBody(id);
+			return;
+		}
+		// Custom fork: a linked note's map is read-only here; open the note instead.
+		const ext = this.extOwner.get(id);
+		if (ext !== undefined) {
+			void this.app.workspace.openLinkText(ext, "", false);
 			return;
 		}
 
@@ -1991,6 +2109,15 @@ export class MindmapView extends TextFileView implements MapController {
 	}
 
 	toggleFold(id: string): void {
+		// Custom fork: a linked note's map folds like any other, by key.
+		const ext = this.extOwner.has(id) ? this.layoutFor(id)?.node : undefined;
+		if (ext) {
+			if (ext.children.length === 0) return;
+			if (this.collapsedKeys.has(ext.key)) this.collapsedKeys.delete(ext.key);
+			else this.collapsedKeys.add(ext.key);
+			this.paint("fold");
+			return;
+		}
 		this.withNode(id, (_parsed, node) => {
 			// Has to agree with the `hasChildren` that decided whether to draw the
 			// toggle at all, or the button exists and does nothing.
@@ -2015,27 +2142,366 @@ export class MindmapView extends TextFileView implements MapController {
 	 * Custom fork: resolve the saved split against this parse's top-level
 	 * branches, and re-tie it to them so later edits are measured from here.
 	 */
-	private settleSplit(rootLayout: LayoutNode): void {
-		const parsed = this.parsed;
-		if (!parsed) return;
-		const root = parsed.root.virtual ? "(file)" : parsed.root.text.trim();
-		const keys = rootLayout.children.map((c) => c.node.key);
-		if (this.pendingRight !== undefined) {
-			this.sideSplit = encodeSplit(root, keys, this.pendingRight);
-			this.pendingRight = undefined;
+	private settleSplits(): void {
+		this.splitNow = new Map();
+		for (const root of this.mapRoots) {
+			const name = this.mapName(root.node);
+			// Relative to the map's root, so a branch keeps its key when the map
+			// goes from being the note's root to being one `# ` of several.
+			const keys = root.children
+				.filter((c) => !c.mapRoot)
+				.map((c) => c.node.key.slice(root.node.key.length));
+			let saved = this.sideSplits.find((x) => x.root === name);
+			if (this.pendingRight?.map === name) {
+				saved = encodeSplit(name, keys, this.pendingRight.count);
+				this.pendingRight = undefined;
+			}
+			const now = resolveSplit(name, keys, saved);
+			this.splitNow.set(root.node.id, now);
+			const next = now === undefined ? saved : encodeSplit(name, keys, now);
+			const others = this.sideSplits.filter((x) => x.root !== name);
+			this.sideSplits = next ? [...others, next] : others;
 		}
-		this.splitNow = resolveSplit(root, keys, this.sideSplit);
-		if (this.splitNow !== undefined) this.sideSplit = encodeSplit(root, keys, this.splitNow);
 	}
 
-	/** The top-level ids on each side, top to bottom, as last laid out. */
-	private sidesNow(): { right: string[]; left: string[] } {
-		const root = this.layoutNodes.find((n) => n.parent === null);
-		const children = root?.children ?? [];
+	/** The top-level ids of one map on each side, top to bottom, as last laid out. */
+	private sidesNow(rootId: string): { right: string[]; left: string[] } {
+		const root = this.mapRoots.find((n) => n.node.id === rootId);
+		const children = (root?.children ?? []).filter((c) => !c.mapRoot);
 		return {
 			right: children.filter((c) => c.side === 1).map((c) => c.node.id),
 			left: children.filter((c) => c.side === -1).map((c) => c.node.id),
 		};
+	}
+
+	// --- custom fork: several maps on one canvas ---------------------------------
+
+	/** Two or more `# ` headings under the file name: one map each. */
+	private isForest(parsed: ParsedDoc): boolean {
+		if (!parsed.root.virtual || this.plugin.settings.rootPolicy !== "auto") return false;
+		return parsed.root.children.filter(isTheme).length >= 2;
+	}
+
+	/** What a map is known by in `data.json`: its root's title, or "(file)". */
+	private mapName(node: MindNode): string {
+		const ext = this.extOwner.get(node.id);
+		if (ext !== undefined) return `ext:${ext}`;
+		return node.virtual ? "(file)" : withoutBlockId(node.text).trim();
+	}
+
+	/** Split the built tree into maps: each `# ` its own root, at depth 0. */
+	private markMaps(rootLayout: LayoutNode, forest: boolean): void {
+		this.ghostRoot = null;
+		if (!forest) {
+			this.mapRoots = [rootLayout];
+			return;
+		}
+		const themes = rootLayout.children.filter((c) => isTheme(c.node));
+		for (const theme of themes) {
+			theme.mapRoot = true;
+			walkLayout(theme, (l) => (l.depth -= 1));
+		}
+		const hasRest = rootLayout.children.some((c) => !c.mapRoot);
+		this.mapRoots = hasRest ? [rootLayout, ...themes] : themes;
+		if (!hasRest) this.ghostRoot = rootLayout;
+	}
+
+	/** Mark each card with its map, and each map's root as a root. */
+	private tagMaps(): void {
+		if (this.ghostRoot) this.elements.get(this.ghostRoot.node.id)?.el.addClass("is-ghost-root");
+		const several = this.mapRoots.length > 1 || this.ghostRoot !== null;
+		for (const root of this.mapRoots) {
+			const rootEl = this.elements.get(root.node.id)?.el;
+			if (rootEl && several) {
+				rootEl.dataset.kind = "root";
+				rootEl.addClass("is-map-root");
+			}
+			const stack = [root];
+			while (stack.length > 0) {
+				const l = stack.pop() as LayoutNode;
+				const el = this.elements.get(l.node.id)?.el;
+				if (el) {
+					el.dataset.map = root.node.id;
+					if (this.extOwner.has(l.node.id)) el.addClass("is-external");
+				}
+				for (const c of l.children) if (!c.mapRoot) stack.push(c);
+			}
+		}
+	}
+
+	isMapRootId(id: string): boolean {
+		return this.mapRoots.some((r) => r.node.id === id);
+	}
+
+	/** The saved positions, with "Add theme here" giving the new map its spot. */
+	private positionsToPlace(): SavedMapPosition[] | undefined {
+		const at = this.pendingMapAt;
+		if (!at) return this.mapPositions;
+		const known = this.mapPositions ?? this.mapPositionsNow;
+		const names = this.mapRoots.map((r) => this.mapName(r.node));
+		const fresh = names.filter((n) => !known.some((p) => p.root === n));
+		// Not there yet (a linked note still loading): keep the spot for it.
+		if (fresh.length === 0) return this.mapPositions;
+		this.pendingMapAt = null;
+		const added = fresh[fresh.length - 1];
+		const placed = names.flatMap((n) => {
+			if (n === added) return [{ root: n, ...at }];
+			const hit = known.find((p) => p.root === n);
+			return hit ? [hit] : [];
+		});
+		this.mapPositions = placed;
+		return placed;
+	}
+
+	/** Pan by however much map space moved on the canvas, so nothing jumps on screen. */
+	private keepCameraOn(shift: Point): void {
+		const before = this.mapShift;
+		this.mapShift = shift;
+		if (!before || (before.x === shift.x && before.y === shift.y)) return;
+		this.canvas.tx -= (shift.x - before.x) * this.canvas.scale;
+		this.canvas.ty -= (shift.y - before.y) * this.canvas.scale;
+		this.canvas.apply();
+	}
+
+	/** A map's root can be dragged to move its whole map, when there are several. */
+	canDragMap(id: string): boolean {
+		return (this.mapRoots.length > 1 || this.ghostRoot !== null) && this.isMapRootId(id);
+	}
+
+	/** Move a map by a drag of (dx, dy) screen pixels since the drag began. */
+	dragMap(id: string, dx: number, dy: number): void {
+		const root = this.mapRoots.find((r) => r.node.id === id);
+		if (!root || !this.paintRoot) return;
+		const name = this.mapName(root.node);
+		if (this.mapDrag?.name !== name) {
+			const at = this.mapPositionsNow.find((p) => p.root === name);
+			if (!at) return;
+			this.mapDrag = { name, from: { x: at.x, y: at.y } };
+		}
+		const from = this.mapDrag.from;
+		const scale = this.canvas.scale;
+		const base = this.mapPositions ?? this.mapPositionsNow;
+		this.mapPositions = base.map((p) =>
+			p.root === name ? { root: name, x: from.x + dx / scale, y: from.y + dy / scale } : p,
+		);
+		this.place(this.paintRoot, null, "fold", false);
+	}
+
+	endMapDrag(): void {
+		if (!this.mapDrag) return;
+		this.mapDrag = null;
+		this.rememberState();
+	}
+
+	/** Back to stacking the maps one below another. */
+	resetMapPositions(): void {
+		if (this.mapPositions === undefined) return;
+		this.mapPositions = undefined;
+		this.paint("fold");
+	}
+
+	/** Where a pointer is, in map space. */
+	private mapPointAt(ev: MouseEvent): Point {
+		const rect = this.canvas.viewport.getBoundingClientRect();
+		const shift = this.mapShift ?? { x: 0, y: 0 };
+		return {
+			x: (ev.clientX - rect.left - this.canvas.tx) / this.canvas.scale - shift.x,
+			y: (ev.clientY - rect.top - this.canvas.ty) / this.canvas.scale - shift.y,
+		};
+	}
+
+	/** The menu for empty canvas. */
+	showCanvasMenu(ev: MouseEvent): void {
+		const parsed = this.parsed;
+		if (!parsed) return;
+		const at = this.mapPointAt(ev);
+		const s = this.plugin.settings;
+		const menu = new Menu();
+		if (canAddTheme(parsed)) {
+			menu.addItem((item) => item
+				.setTitle("Add theme here")
+				.setIcon("heading-1")
+				.onClick(() => this.addThemeToNote({ x: at.x - 20, y: at.y - 20 })));
+		}
+		menu.addItem((item) => item
+			.setTitle("Show map of another note here…")
+			.setIcon("map")
+			.onClick(() => this.pickLinkedMap(at)));
+		menu.addSeparator();
+		menu.addItem((item) => item.setTitle("Fit map to view").setIcon("maximize").onClick(() => this.fit()));
+		menu.addItem((item) => item.setTitle("Expand all").setIcon("chevrons-up-down").onClick(() => this.expandAll()));
+		menu.addItem((item) => item.setTitle("Collapse all").setIcon("chevrons-down-up").onClick(() => this.collapseAll()));
+		menu.addSeparator();
+		menu.addItem((item) => item
+			.setTitle(s.layout === "balanced" ? "Layout: single side" : "Layout: both sides")
+			.setIcon("arrow-left-right")
+			.onClick(() => void this.setLayout(s.layout === "balanced" ? "right" : "balanced")));
+		menu.addItem((item) => item
+			.setTitle(s.annotationDisplay === "tooltip" ? "Annotations: under the card" : "Annotations: tooltip on hover")
+			.setIcon("message-square-text")
+			.onClick(() => void this.plugin.toggleAnnotationDisplay()));
+		if (this.sideSplits.length > 0) {
+			menu.addItem((item) => item
+				.setTitle("Reset left/right placement")
+				.setIcon("rotate-ccw")
+				.onClick(() => this.resetSides()));
+		}
+		if (this.mapPositions !== undefined) {
+			menu.addItem((item) => item
+				.setTitle("Reset map positions")
+				.setIcon("layout-list")
+				.onClick(() => this.resetMapPositions()));
+		}
+		menu.showAtMouseEvent(ev);
+	}
+
+	// --- custom fork: other notes' maps on this canvas -------------------------
+
+	/** The parse a drawn node belongs to: a linked note's, or this note's. */
+	private docFor(id: string): ParsedDoc {
+		const path = this.extOwner.get(id);
+		return (path !== undefined ? this.extDocs.get(path) : undefined) ?? (this.parsed as ParsedDoc);
+	}
+
+	private drawnRelations(): Relation[] {
+		return this.extRelations.length > 0 ? [...this.relations, ...this.extRelations] : this.relations;
+	}
+
+	/** Read and parse every linked note, then repaint. Missing notes are skipped. */
+	private async loadLinkedMaps(): Promise<void> {
+		const token = ++this.extLoad;
+		const docs = new Map<string, ParsedDoc>();
+		for (const [index, path] of this.linkedMaps.entries()) {
+			const file = this.app.vault.getAbstractFileByPath(path);
+			if (!(file instanceof TFile)) continue;
+			try {
+				const text = await this.app.vault.cachedRead(file);
+				const parsed = parseMarkdown(text, { ...this.parseOptions(), title: file.basename });
+				reidentify(parsed, `x${index}`, path);
+				docs.set(path, parsed);
+			} catch (error) {
+				console.error(`Mindmap Mode: could not read ${path}`, error);
+			}
+		}
+		if (token !== this.extLoad) return;
+		this.extDocs = docs;
+		if (this.parsed) this.paint("fold");
+	}
+
+	/** Build each linked note's map into the paint, after this note's own maps. */
+	private addLinkedMaps(visible: LayoutNode[]): void {
+		this.extOwner.clear();
+		this.extRelations = [];
+		const parsed = this.parsed;
+		if (!parsed) return;
+		const roots = new Map<string, string>();
+		for (const path of this.linkedMaps) {
+			const doc = this.extDocs.get(path);
+			if (!doc) continue;
+			const root = createLayoutNode(doc.root, null, 0);
+			const build = (node: MindNode, layout: LayoutNode): void => {
+				visible.push(layout);
+				this.extOwner.set(node.id, path);
+				if (this.collapsedKeys.has(node.key)) return;
+				for (const child of this.childrenOf(doc, node, false)) {
+					const childLayout = createLayoutNode(child, layout, layout.depth + 1);
+					layout.children.push(childLayout);
+					build(child, childLayout);
+				}
+			};
+			build(doc.root, root);
+			this.mapRoots.push(root);
+			roots.set(path, doc.root.id);
+		}
+		if (roots.size === 0 || !this.file) return;
+		const source = this.file.path;
+		walk(parsed.root, (node) => {
+			if (node.kind === "body") return;
+			for (const target of linkTargetsIn(node.text)) {
+				const dest = this.app.metadataCache.getFirstLinkpathDest(target, source)?.path;
+				const rootId = dest === undefined ? undefined : roots.get(dest);
+				if (rootId) this.extRelations.push({ fromId: node.id, toId: rootId, label: null, linkIndex: -1 });
+			}
+		});
+	}
+
+	/** "Show map of …" for every other note this node links to that is not shown yet. */
+	private addLinkedMapItems(node: MindNode, menu: Menu): void {
+		const source = this.file?.path;
+		if (!source) return;
+		for (const target of linkTargetsIn(node.text)) {
+			const file = this.app.metadataCache.getFirstLinkpathDest(target, source);
+			if (!file || file.extension !== "md" || file.path === source || this.linkedMaps.includes(file.path)) continue;
+			menu.addItem((item) => item
+				.setTitle(`Show map of "${file.basename}" here`)
+				.setIcon("map")
+				.onClick(() => this.addLinkedMap(file.path, this.beside(node.id))));
+		}
+	}
+
+	/** A spot to the right of a node, in map space, for a map opened from it. */
+	private beside(id: string): Point | undefined {
+		const l = this.layoutFor(id);
+		const shift = this.mapShift;
+		if (!l || !shift) return undefined;
+		return { x: l.x + l.width + 160 - shift.x, y: l.y - shift.y };
+	}
+
+	private pickLinkedMap(at: Point): void {
+		const self = this.file?.path;
+		const files = this.app.vault
+			.getMarkdownFiles()
+			.filter((f) => f.path !== self && !this.linkedMaps.includes(f.path))
+			.sort((a, b) => a.path.localeCompare(b.path));
+		new NotePickerModal(this.app, files, (file) => this.addLinkedMap(file.path, at)).open();
+	}
+
+	addLinkedMap(path: string, at?: Point): void {
+		if (this.linkedMaps.includes(path)) return;
+		this.linkedMaps = [...this.linkedMaps, path];
+		this.pendingMapAt = at ?? null;
+		this.rememberState();
+		void this.loadLinkedMaps();
+	}
+
+	removeLinkedMap(path: string): void {
+		this.linkedMaps = this.linkedMaps.filter((p) => p !== path);
+		this.mapPositions = this.mapPositions?.filter((p) => p.root !== `ext:${path}`);
+		this.extDocs.delete(path);
+		this.paint("fold");
+	}
+
+	private showLinkedMapMenu(id: string, path: string, menu: Menu, ev: MouseEvent): void {
+		const name = path.replace(/\.md$/, "").split("/").at(-1) ?? path;
+		menu.addItem((item) => item.setTitle(`From "${name}" (read-only)`).setIcon("map").setDisabled(true));
+		menu.addSeparator();
+		menu.addItem((item) => item
+			.setTitle("Open note")
+			.setIcon("file-text")
+			.onClick(() => void this.app.workspace.openLinkText(path, "", false)));
+		menu.addItem((item) => item
+			.setTitle("Open note in new tab")
+			.setIcon("file-plus")
+			.onClick(() => void this.app.workspace.openLinkText(path, "", "tab")));
+		const node = this.layoutFor(id)?.node;
+		if (node && node.children.length > 0) {
+			menu.addItem((item) => item
+				.setTitle(this.collapsedKeys.has(node.key) ? "Unfold" : "Fold")
+				.setIcon("chevrons-down-up")
+				.onClick(() => this.toggleFold(id)));
+		}
+		menu.addSeparator();
+		menu.addItem((item) => item
+			.setTitle("Remove this map from the canvas")
+			.setIcon("trash-2")
+			.onClick(() => this.removeLinkedMap(path)));
+		menu.showAtMouseEvent(ev);
+	}
+
+	private async setLayout(layout: "balanced" | "right"): Promise<void> {
+		this.plugin.settings.layout = layout;
+		await this.plugin.saveSettings();
+		this.plugin.refreshAllViews();
 	}
 
 	/**
@@ -2043,51 +2509,53 @@ export class MindmapView extends TextFileView implements MapController {
 	 * means, or null for a drop anywhere deeper.
 	 */
 	private slotForDrop(
-		parsed: ParsedDoc,
 		node: MindNode,
 		target: MindNode,
 		mode: DropMode,
-	): { side: SideSign; index: number } | null {
-		if (target === parsed.root) {
-			if (mode === "first-child") return { side: 1, index: 0 };
-			if (mode === "child") return { side: -1, index: Number.MAX_SAFE_INTEGER };
+	): { side: SideSign; index: number; rootId: string } | null {
+		if (this.isMapRootId(target.id)) {
+			if (mode === "first-child") return { side: 1, index: 0, rootId: target.id };
+			if (mode === "child") return { side: -1, index: Number.MAX_SAFE_INTEGER, rootId: target.id };
 			return null;
 		}
-		if (target.parent !== parsed.root || (mode !== "before" && mode !== "after")) return null;
+		const root = target.parent;
+		if (!root || !this.isMapRootId(root.id) || (mode !== "before" && mode !== "after")) return null;
 
-		const { right, left } = this.sidesNow();
+		const { right, left } = this.sidesNow(root.id);
 		const side: SideSign = right.includes(target.id) ? 1 : -1;
 		const group = (side === 1 ? right : left).filter((x) => x !== node.id);
 		const at = group.indexOf(target.id);
 		if (at < 0) return null;
-		return { side, index: at + (mode === "after" ? 1 : 0) };
+		return { side, index: at + (mode === "after" ? 1 : 0), rootId: root.id };
 	}
 
-	canDropOnSide(id: string): boolean {
+	canDropOnSide(id: string, rootId: string): boolean {
 		const parsed = this.parsed;
 		const node = parsed?.byId.get(id);
-		if (!parsed || !node || node === parsed.root) return false;
-		return node.parent === parsed.root || canMove(node, parsed.root);
+		const root = parsed?.byId.get(rootId);
+		if (!parsed || !node || !root || node === root || this.isMapRootId(id)) return false;
+		return node.parent === root || canMove(node, root);
 	}
 
-	/** Make `id` the `index`-th top-level branch on `side`, and remember the split. */
-	moveToSide(id: string, side: SideSign, index: number): void {
+	/** Make `id` the `index`-th top-level branch of a map on `side`, and remember the split. */
+	moveToSide(id: string, side: SideSign, index: number, rootId: string): void {
 		const parsed = this.parsed;
 		const node = parsed?.byId.get(id);
-		if (!parsed || !node || !this.canDropOnSide(id)) return;
+		const root = parsed?.byId.get(rootId);
+		if (!parsed || !node || !root || !this.canDropOnSide(id, rootId)) return;
 
-		const { right, left } = this.sidesNow();
+		const { right, left } = this.sidesNow(rootId);
 		const placement = placeOnSide(right, left, id, side, index, (x) => parsed.byId.has(x));
 		const anchor = placement.anchor;
 		const target = anchor ? parsed.byId.get(anchor.targetId) : undefined;
 		const mutation = !anchor || !target
-			? moveNode(parsed, node, parsed.root)
+			? moveNode(parsed, node, root)
 			: anchor.mode === "before"
 				? moveBefore(parsed, node, target)
 				: moveAfter(parsed, node, target);
 
-		this.pendingRight = placement.split;
-		this.collapsedKeys.delete(parsed.root.key);
+		this.pendingRight = { map: this.mapName(root), count: placement.split };
+		this.collapsedKeys.delete(root.key);
 		// Crossing to the other side at the boundary keeps the note as it is and
 		// changes only the split, so there is no text to apply -- just repaint.
 		if (mutation.ok && mutation.text !== this.data) this.apply(mutation);
@@ -2207,7 +2675,12 @@ export class MindmapView extends TextFileView implements MapController {
 	/** One relation line's menu: what it joins, then relabel or delete it. */
 	showRelationMenu(index: number, ev: MouseEvent): void {
 		const parsed = this.parsed;
-		const rel = this.relations[index];
+		const rel = this.drawnRelations()[index];
+		if (rel && rel.linkIndex < 0) {
+			const path = this.extOwner.get(rel.toId);
+			if (path !== undefined) this.showLinkedMapMenu(rel.toId, path, new Menu(), ev);
+			return;
+		}
 		const from = rel && parsed?.byId.get(rel.fromId);
 		const to = rel && parsed?.byId.get(rel.toId);
 		if (!parsed || !rel || !from || !to) return;
@@ -2248,10 +2721,11 @@ export class MindmapView extends TextFileView implements MapController {
 		);
 	}
 
-	/** Custom fork: a new `# ` theme at the end of the note, named in place. */
-	addThemeToNote(): void {
+	/** Custom fork: a new `# ` theme at the end of the note, named in place -- at `at` if given. */
+	addThemeToNote(at?: Point): void {
 		const parsed = this.parsed;
 		if (!parsed || !canAddTheme(parsed)) return;
+		this.pendingMapAt = at ?? null;
 		this.apply(addTheme(parsed), true);
 	}
 
@@ -2261,8 +2735,8 @@ export class MindmapView extends TextFileView implements MapController {
 
 	/** Back to splitting by weight. */
 	resetSides(): void {
-		if (this.sideSplit === undefined && this.pendingRight === undefined) return;
-		this.sideSplit = undefined;
+		if (this.sideSplits.length === 0 && this.pendingRight === undefined) return;
+		this.sideSplits = [];
 		this.pendingRight = undefined;
 		this.paint("fold");
 	}
@@ -2289,15 +2763,17 @@ export class MindmapView extends TextFileView implements MapController {
 
 		if (this.isBalanced()) {
 			// Custom fork: a drop among the top-level branches picks a side too.
-			const slot = this.slotForDrop(parsed, node, target, mode);
+			const slot = this.slotForDrop(node, target, mode);
 			if (slot) {
-				this.moveToSide(id, slot.side, slot.index);
+				this.moveToSide(id, slot.side, slot.index, slot.rootId);
 				return;
 			}
 			// Anything else takes the node off the top level; if it was on the
-			// right, the right side is one shorter.
-			if (this.splitNow !== undefined && this.sidesNow().right.includes(id)) {
-				this.pendingRight = Math.max(0, this.splitNow - 1);
+			// right of its map, that side is one shorter.
+			const from = node.parent;
+			const split = from ? this.splitNow.get(from.id) : undefined;
+			if (from && split !== undefined && this.sidesNow(from.id).right.includes(id)) {
+				this.pendingRight = { map: this.mapName(from), count: Math.max(0, split - 1) };
 			}
 		}
 
@@ -2370,9 +2846,15 @@ export class MindmapView extends TextFileView implements MapController {
 			return;
 		}
 
+		const ext = this.extOwner.get(id);
+		if (ext !== undefined) {
+			this.showLinkedMapMenu(id, ext, menu, ev);
+			return;
+		}
 		const node = this.parsed?.byId.get(id);
 		if (!node) return;
 		this.select(id);
+		this.addLinkedMapItems(node, menu);
 
 		menu.addItem((item) =>
 			item
@@ -2424,7 +2906,7 @@ export class MindmapView extends TextFileView implements MapController {
 			);
 		}
 		// Custom fork: another `# ` theme beside the current one(s).
-		if (!node.parent && this.parsed && canAddTheme(this.parsed)) {
+		if (this.isMapRootId(id) && this.parsed && canAddTheme(this.parsed)) {
 			menu.addItem((item) =>
 				item
 					.setTitle("Add theme (new # heading)")
@@ -2984,11 +3466,24 @@ export class MindmapView extends TextFileView implements MapController {
 
 	private buildCanvasFile(): string | null {
 		if (!this.hasMap()) return null;
+		// Custom fork: no hidden root in the file, and every map's root a root
+		// there too -- detached for the length of the build, then put back.
+		const detached = this.layoutNodes.filter((l) => l.mapRoot);
+		const parents = detached.map((l) => l.parent);
+		for (const l of detached) l.parent = null;
+		try {
+			return this.buildCanvasFileNow();
+		} finally {
+			detached.forEach((l, i) => (l.parent = parents[i]));
+		}
+	}
+
+	private buildCanvasFileNow(): string | null {
 		const parsed = this.parsed;
 		const palette = this.branchPalette();
 		return serializeCanvas(
 			buildCanvas(
-				{ nodes: this.layoutNodes },
+				{ nodes: this.layoutNodes.filter((l) => l !== this.ghostRoot) },
 				{
 					title: this.file?.basename ?? "Untitled",
 					branchColor: (branch) =>

@@ -56,8 +56,14 @@ export interface MapController {
 	move(id: string, targetId: string, mode: DropMode): void;
 	/** Custom fork: free left/right placement in balanced layout. */
 	isBalanced(): boolean;
-	canDropOnSide(id: string): boolean;
-	moveToSide(id: string, side: SideSign, index: number): void;
+	canDropOnSide(id: string, rootId: string): boolean;
+	moveToSide(id: string, side: SideSign, index: number, rootId: string): void;
+	/** Custom fork: with several maps on the canvas, a map's root drags its whole map. */
+	canDragMap(id: string): boolean;
+	dragMap(id: string, dx: number, dy: number): void;
+	endMapDrag(): void;
+	/** Custom fork: the menu for empty canvas. */
+	showCanvasMenu(ev: MouseEvent): void;
 
 	undo(): void;
 	redo(): void;
@@ -227,6 +233,10 @@ export function attachInteractions(controller: MapController): () => void {
 	});
 
 	// --- dragging to reparent or reorder ---------------------------------------
+	// Custom fork: a map being dragged by its root.
+	let mapDrag: { id: string; pointer: number; origin: { x: number; y: number }; moving: boolean } | null = null;
+	let mapFrame = 0;
+	let mapAt = { x: 0, y: 0 };
 	let dragId: string | null = null;
 	let dragPointer = -1;
 	let origin = { x: 0, y: 0 };
@@ -282,8 +292,8 @@ export function attachInteractions(controller: MapController): () => void {
 		el: HTMLElement;
 		id: string;
 		mode: DropMode;
-		/** Custom fork: a drop in open canvas beside the root, on that side. */
-		slot?: { side: SideSign; index: number };
+		/** Custom fork: a drop in open canvas beside a map's root, on that side. */
+		slot?: { side: SideSign; index: number; rootId: string };
 	}
 
 	/**
@@ -293,26 +303,41 @@ export function attachInteractions(controller: MapController): () => void {
 	 * the side is empty) so the drop says where it lands.
 	 */
 	const sideHit = (dragged: string, x: number, y: number): DropHit | null => {
-		if (!controller.isBalanced() || !controller.canDropOnSide(dragged)) return null;
-		const rootEl = viewport.querySelector<HTMLElement>('.mm-node[data-kind="root"]');
-		const rootId = rootEl?.dataset.id;
-		if (!rootEl || !rootId) return null;
+		if (!controller.isBalanced()) return null;
+		// Custom fork: every map's root has its own two sides; the nearest root
+		// whose first-level column holds the pointer wins.
+		let best: { hit: DropHit; distance: number } | null = null;
+		viewport
+			.querySelectorAll<HTMLElement>('.mm-node[data-kind="root"]:not(.is-ghost-root)')
+			.forEach((rootEl) => {
+				const rootId = rootEl.dataset.id;
+				if (!rootId || !controller.canDropOnSide(dragged, rootId)) return;
+				const cards: Array<SideCard & { el: HTMLElement }> = [];
+				viewport
+					.querySelectorAll<HTMLElement>(`.mm-node[data-depth="1"][data-map="${CSS.escape(rootId)}"]`)
+					.forEach((el) => {
+						const id = el.dataset.id;
+						if (!id || id === dragged) return;
+						cards.push({ ...boxOf(el, id), side: el.dataset.side === "left" ? -1 : 1, el });
+					});
+				const rootBox = boxOf(rootEl, rootId);
+				const found = sideSlot(rootBox, cards, x, y);
+				if (!found) return;
+				const slot = { ...found, rootId };
+				const distance = Math.hypot(x - (rootBox.left + rootBox.right) / 2, y - (rootBox.top + rootBox.bottom) / 2);
+				if (best && best.distance <= distance) return;
 
-		const cards: Array<SideCard & { el: HTMLElement }> = [];
-		viewport.querySelectorAll<HTMLElement>('.mm-node[data-depth="1"]').forEach((el) => {
-			const id = el.dataset.id;
-			if (!id || id === dragged) return;
-			cards.push({ ...boxOf(el, id), side: el.dataset.side === "left" ? -1 : 1, el });
-		});
-		const slot = sideSlot(boxOf(rootEl, rootId), cards, x, y);
-		if (!slot) return null;
-
-		const own = cards.filter((c) => c.side === slot.side).sort((a, b) => a.top - b.top);
-		const below = own[slot.index];
-		const above = own[own.length - 1];
-		if (below) return { el: below.el, id: below.id, mode: "before", slot };
-		if (above) return { el: above.el, id: above.id, mode: "after", slot };
-		return { el: rootEl, id: rootId, mode: "child", slot };
+				const own = cards.filter((c) => c.side === slot.side).sort((a, b) => a.top - b.top);
+				const below = own[slot.index];
+				const above = own[own.length - 1];
+				const hit: DropHit = below
+					? { el: below.el, id: below.id, mode: "before", slot }
+					: above
+						? { el: above.el, id: above.id, mode: "after", slot }
+						: { el: rootEl, id: rootId, mode: "child", slot };
+				best = { hit, distance };
+			});
+		return (best as { hit: DropHit } | null)?.hit ?? null;
 	};
 
 	/**
@@ -416,6 +441,11 @@ export function attachInteractions(controller: MapController): () => void {
 		const id = nodeIdFrom(card);
 		if (!id) return;
 
+		if (controller.canDragMap(id)) {
+			mapDrag = { id, pointer: ev.pointerId, origin: { x: ev.clientX, y: ev.clientY }, moving: false };
+			return;
+		}
+
 		dragId = id;
 		dragPointer = ev.pointerId;
 		origin = { x: ev.clientX, y: ev.clientY };
@@ -423,6 +453,22 @@ export function attachInteractions(controller: MapController): () => void {
 	});
 
 	on(viewport, "pointermove", (ev) => {
+		if (mapDrag && ev.pointerId === mapDrag.pointer) {
+			const drag = mapDrag;
+			if (!drag.moving) {
+				if (Math.hypot(ev.clientX - drag.origin.x, ev.clientY - drag.origin.y) < DRAG_THRESHOLD) return;
+				drag.moving = true;
+				viewport.addClass("is-dragging-map");
+				viewport.setPointerCapture(ev.pointerId);
+			}
+			mapAt = { x: ev.clientX - drag.origin.x, y: ev.clientY - drag.origin.y };
+			if (mapFrame !== 0) return;
+			mapFrame = window.requestAnimationFrame(() => {
+				mapFrame = 0;
+				if (mapDrag) controller.dragMap(mapDrag.id, mapAt.x, mapAt.y);
+			});
+			return;
+		}
 		if (dragId === null || ev.pointerId !== dragPointer) return;
 
 		if (!dragging) {
@@ -444,7 +490,26 @@ export function attachInteractions(controller: MapController): () => void {
 		});
 	});
 
+	const endMapDrag = (ev: PointerEvent | null): void => {
+		const drag = mapDrag;
+		if (!drag) return;
+		mapDrag = null;
+		if (mapFrame !== 0) {
+			window.cancelAnimationFrame(mapFrame);
+			mapFrame = 0;
+		}
+		viewport.removeClass("is-dragging-map");
+		if (!drag.moving) return;
+		gate.dragEnded();
+		if (ev) controller.dragMap(drag.id, ev.clientX - drag.origin.x, ev.clientY - drag.origin.y);
+		controller.endMapDrag();
+	};
+
 	const finishDrag = (ev: PointerEvent): void => {
+		if (mapDrag && ev.pointerId === mapDrag.pointer) {
+			endMapDrag(ev);
+			return;
+		}
 		if (dragId === null || ev.pointerId !== dragPointer) return;
 		if (dragging) {
 			gate.dragEnded();
@@ -452,7 +517,7 @@ export function attachInteractions(controller: MapController): () => void {
 			if (hit?.slot) {
 				const source = dragId;
 				endDrag();
-				controller.moveToSide(source, hit.slot.side, hit.slot.index);
+				controller.moveToSide(source, hit.slot.side, hit.slot.index, hit.slot.rootId);
 				return;
 			}
 			if (hit && controller.canDrop(dragId, hit.id, hit.mode)) {
@@ -465,7 +530,10 @@ export function attachInteractions(controller: MapController): () => void {
 		endDrag();
 	};
 	on(viewport, "pointerup", finishDrag);
-	on(viewport, "pointercancel", () => endDrag());
+	on(viewport, "pointercancel", () => {
+		endMapDrag(null);
+		endDrag();
+	});
 
 	// --- the node menu ---------------------------------------------------------
 	on(viewport, "contextmenu", (ev) => {
@@ -480,8 +548,13 @@ export function attachInteractions(controller: MapController): () => void {
 			return;
 		}
 		const id = nodeIdFrom(ev.target);
-		// Blank canvas keeps the platform menu too; a card gets the map's own.
-		if (!id) return;
+		// Custom fork: empty canvas gets the map's own menu as well.
+		if (!id) {
+			ev.preventDefault();
+			endDrag();
+			controller.showCanvasMenu(ev);
+			return;
+		}
 		ev.preventDefault();
 		endDrag();
 		controller.showMenu(id, ev);

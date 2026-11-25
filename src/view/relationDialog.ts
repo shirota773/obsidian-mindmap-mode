@@ -2,7 +2,7 @@
  * Custom fork: the two small dialogs behind "Add relation…" -- pick the node the
  * relation points at, then (optionally) name the relation.
  */
-import { App, FuzzySuggestModal, Modal, Setting } from "obsidian";
+import { App, FuzzySuggestModal, Modal, Setting, TFile } from "obsidian";
 import type { MindNode } from "../model/types.ts";
 import { stripInternalLinks, withoutBlockId } from "../model/relations.ts";
 
@@ -39,6 +39,31 @@ export class RelationTargetModal extends FuzzySuggestModal<MindNode> {
 
 	onChooseItem(node: MindNode): void {
 		this.onPick(node);
+	}
+}
+
+/** Custom fork: pick a note whose map to show on this canvas. */
+export class NotePickerModal extends FuzzySuggestModal<TFile> {
+	private readonly files: TFile[];
+	private readonly onPick: (file: TFile) => void;
+
+	constructor(app: App, files: TFile[], onPick: (file: TFile) => void) {
+		super(app);
+		this.files = files;
+		this.onPick = onPick;
+		this.setPlaceholder("Show the map of which note?");
+	}
+
+	getItems(): TFile[] {
+		return this.files;
+	}
+
+	getItemText(file: TFile): string {
+		return file.path.replace(/\.md$/, "");
+	}
+
+	onChooseItem(file: TFile): void {
+		this.onPick(file);
 	}
 }
 

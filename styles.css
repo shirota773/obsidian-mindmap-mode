@@ -1120,3 +1120,26 @@ button.is-recording {
 	outline: 2px solid var(--interactive-accent);
 	outline-offset: 2px;
 }
+
+/* --- custom fork: several maps on one canvas -------------------------------- */
+
+/* The file-name root above maps of their own: kept for its size, never shown. */
+.mm-node.is-ghost-root {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.mm-node.is-map-root .mm-card {
+	cursor: grab;
+}
+
+.mm-viewport.is-dragging-map,
+.mm-viewport.is-dragging-map .mm-card {
+	cursor: grabbing;
+}
+
+/* A linked note's map: read-only, so it reads as borrowed. */
+.mm-node.is-external .mm-card {
+	border-style: dashed;
+	opacity: 0.85;
+}

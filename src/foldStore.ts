@@ -28,6 +28,13 @@ export interface SideSplit {
 	total: number;
 }
 
+/** Custom fork: where one map of a note was put, by the name of its root. */
+export interface SavedMapPosition {
+	root: string;
+	x: number;
+	y: number;
+}
+
 /** One note's view state, as it sits in `data.json`. */
 export interface NoteViewState {
 	/**
@@ -51,6 +58,12 @@ export interface NoteViewState {
 	 * balanced layout, once the user has dragged one across. Absent: by weight.
 	 */
 	split?: SideSplit;
+	/** Custom fork: the same, for every other map on the canvas. */
+	mapSplits?: SideSplit[];
+	/** Custom fork: where each map sits, once one has been moved. */
+	maps?: SavedMapPosition[];
+	/** Custom fork: other notes whose maps are shown on this canvas, by path. */
+	linkedMaps?: string[];
 	/** Last touched, in ms. Only ever compared, never shown. */
 	at: number;
 }
@@ -86,11 +99,33 @@ function readEntry(value: unknown): NoteViewState | null {
 	if (typeof value.focusKey === "string") state.focusKey = value.focusKey;
 	if (typeof value.focusId === "string") state.focusId = value.focusId;
 	if (isSplit(value.split)) state.split = { ...value.split };
+	const splits = readList(value.mapSplits, isSplit);
+	if (splits) state.mapSplits = splits;
+	const maps = readList(value.maps, isMapPosition);
+	if (maps) state.maps = maps;
+	const linked = readList(value.linkedMaps, (v): v is string => typeof v === "string" && v !== "");
+	if (linked) state.linkedMaps = linked;
 	return state;
 }
 
 function isCount(value: unknown): value is number {
 	return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isMapPosition(value: unknown): value is SavedMapPosition {
+	return (
+		isRecord(value) &&
+		typeof value.root === "string" &&
+		typeof value.x === "number" && Number.isFinite(value.x) &&
+		typeof value.y === "number" && Number.isFinite(value.y)
+	);
+}
+
+/** The valid entries of a list, copied; undefined when there are none. */
+function readList<T>(value: unknown, valid: (v: unknown) => v is T): T[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out = value.filter(valid).map((v) => (typeof v === "object" ? { ...v } : v));
+	return out.length > 0 ? out : undefined;
 }
 
 /** An old bare-number split is not one: it is exactly what this replaced. */
@@ -154,6 +189,12 @@ export function putNoteState(
 	if (entry.focusKey !== undefined) state.focusKey = entry.focusKey;
 	if (entry.focusId !== undefined) state.focusId = entry.focusId;
 	if (entry.split !== undefined && isSplit(entry.split)) state.split = { ...entry.split };
+	const splits = readList(entry.mapSplits, isSplit);
+	if (splits) state.mapSplits = splits;
+	const maps = readList(entry.maps, isMapPosition);
+	if (maps) state.maps = maps;
+	const linked = readList(entry.linkedMaps, (v): v is string => typeof v === "string" && v !== "");
+	if (linked) state.linkedMaps = linked;
 	return prune({ ...store, [path]: state });
 }
 

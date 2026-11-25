@@ -62,7 +62,8 @@ export function renderEdges(
 
 	for (const child of nodes) {
 		const parent = child.parent;
-		if (!parent) continue;
+		// Custom fork: a map of its own is not joined to the hidden root above it.
+		if (!parent || child.mapRoot) continue;
 
 		const [px, py] = anchorFor(parent, true, child.side);
 		const [cx, cy] = anchorFor(child, false, child.side);

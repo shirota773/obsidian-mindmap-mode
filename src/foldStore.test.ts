@@ -186,3 +186,32 @@ test("a malformed or old numeric split is dropped on read (custom fork)", () => 
 		assert.equal(read["a.md"].split, undefined, `split ${JSON.stringify(split)} survived`);
 	}
 });
+
+test("map positions, other maps' splits and linked notes round-trip (custom fork)", () => {
+	const entry = {
+		collapsed: [],
+		mapSplits: [{ ...SPLIT, root: "テーマ2" }],
+		maps: [{ root: "テーマ", x: 0, y: 0 }, { root: "テーマ2", x: 420, y: -60.5 }],
+		linkedMaps: ["notes/Other.md"],
+	};
+	const store = putNoteState({}, "a.md", entry, 1);
+	const read = readStore(JSON.parse(JSON.stringify(store)))["a.md"];
+	assert.deepEqual(read.mapSplits, entry.mapSplits);
+	assert.deepEqual(read.maps, entry.maps);
+	assert.deepEqual(read.linkedMaps, entry.linkedMaps);
+});
+
+test("bad map entries are dropped one by one (custom fork)", () => {
+	const read = readStore({
+		"a.md": {
+			collapsed: [],
+			at: 1,
+			maps: [{ root: "A", x: 1, y: 2 }, { root: "B", x: "1", y: 2 }, null],
+			linkedMaps: ["", 3, "x.md"],
+			mapSplits: "nope",
+		},
+	})["a.md"];
+	assert.deepEqual(read.maps, [{ root: "A", x: 1, y: 2 }]);
+	assert.deepEqual(read.linkedMaps, ["x.md"]);
+	assert.equal(read.mapSplits, undefined);
+});

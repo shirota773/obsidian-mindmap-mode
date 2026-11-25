@@ -38,6 +38,11 @@ export interface LayoutNode {
 	branch: number;
 	children: LayoutNode[];
 	parent: LayoutNode | null;
+	/**
+	 * Custom fork: this node heads a map of its own on a canvas of several, so
+	 * it is laid out apart from its parent and joined to it by no connector.
+	 */
+	mapRoot?: boolean;
 }
 
 export interface LayoutOptions {
