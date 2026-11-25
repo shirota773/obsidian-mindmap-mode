@@ -63,6 +63,7 @@ import { createEdgeLayer, renderEdges, renderRelations } from "./edges.ts";
 import { resolveRelations, withoutBlockId } from "../model/relations.ts";
 import { NotePickerModal, RelationLabelModal, RelationTargetModal, breadcrumb } from "./relationDialog.ts";
 import { linkTargetsIn, reidentify } from "./linkedMaps.ts";
+import { MINDMAP_ICON } from "../icon.ts";
 import type { Relation } from "../model/relations.ts";
 import { buildNodeElement } from "./nodes.ts";
 import type { NodeElement } from "./nodes.ts";
@@ -553,7 +554,7 @@ export class MindmapView extends TextFileView implements MapController {
 	}
 
 	override getIcon(): string {
-		return "git-fork";
+		return MINDMAP_ICON;
 	}
 
 	override getViewData(): string {
@@ -1565,8 +1566,10 @@ export class MindmapView extends TextFileView implements MapController {
 	private layOut(rootLayout: LayoutNode, reason: PaintReason): LayoutResult {
 		const s = this.plugin.settings;
 		const laidOut = this.perf.now();
+		// Custom fork: always both sides, so a branch can be dragged to either; the
+		// setting only says where branches start before anything is dragged.
 		const base = {
-			mode: s.layout,
+			mode: "balanced" as const,
 			horizontalGap: s.horizontalGap,
 			verticalGap: s.verticalGap,
 			padding: 60,
@@ -1578,7 +1581,7 @@ export class MindmapView extends TextFileView implements MapController {
 				this.mapRoots.map((root) => ({
 					root,
 					name: this.mapName(root.node),
-					split: this.splitNow.get(root.node.id),
+					split: this.splitFor(root),
 				})),
 				base,
 				this.positionsToPlace(),
@@ -1598,7 +1601,7 @@ export class MindmapView extends TextFileView implements MapController {
 			}
 			result = forest;
 		} else {
-			result = layoutTree(rootLayout, { ...base, split: this.splitNow.get(rootLayout.node.id) });
+			result = layoutTree(rootLayout, { ...base, split: this.splitFor(rootLayout) });
 			// A lone map's space has its root at the origin.
 			this.keepCameraOn({ x: rootLayout.x, y: rootLayout.y });
 			this.mapPositionsNow = [{ root: this.mapName(rootLayout.node), x: 0, y: 0 }];
@@ -2134,8 +2137,14 @@ export class MindmapView extends TextFileView implements MapController {
 
 	// --- custom fork: free left/right placement ---------------------------------
 
-	isBalanced(): boolean {
-		return this.plugin.settings.layout === "balanced";
+	/**
+	 * A map's split: the one the user dragged into place, or else the default
+	 * placement -- by weight, or every branch on the right.
+	 */
+	private splitFor(root: LayoutNode): number | undefined {
+		const manual = this.splitNow.get(root.node.id);
+		if (manual !== undefined || this.plugin.settings.layout !== "right") return manual;
+		return root.children.filter((c) => !c.mapRoot).length;
 	}
 
 	/**
@@ -2333,10 +2342,6 @@ export class MindmapView extends TextFileView implements MapController {
 		menu.addItem((item) => item.setTitle("Collapse all").setIcon("chevrons-down-up").onClick(() => this.collapseAll()));
 		menu.addSeparator();
 		menu.addItem((item) => item
-			.setTitle(s.layout === "balanced" ? "Layout: single side" : "Layout: both sides")
-			.setIcon("arrow-left-right")
-			.onClick(() => void this.setLayout(s.layout === "balanced" ? "right" : "balanced")));
-		menu.addItem((item) => item
 			.setTitle(s.annotationDisplay === "tooltip" ? "Annotations: under the card" : "Annotations: tooltip on hover")
 			.setIcon("message-square-text")
 			.onClick(() => void this.plugin.toggleAnnotationDisplay()));
@@ -2496,12 +2501,6 @@ export class MindmapView extends TextFileView implements MapController {
 			.setIcon("trash-2")
 			.onClick(() => this.removeLinkedMap(path)));
 		menu.showAtMouseEvent(ev);
-	}
-
-	private async setLayout(layout: "balanced" | "right"): Promise<void> {
-		this.plugin.settings.layout = layout;
-		await this.plugin.saveSettings();
-		this.plugin.refreshAllViews();
 	}
 
 	/**
@@ -2761,7 +2760,7 @@ export class MindmapView extends TextFileView implements MapController {
 		const target = parsed?.byId.get(targetId);
 		if (!parsed || !node || !target) return;
 
-		if (this.isBalanced()) {
+		{
 			// Custom fork: a drop among the top-level branches picks a side too.
 			const slot = this.slotForDrop(node, target, mode);
 			if (slot) {

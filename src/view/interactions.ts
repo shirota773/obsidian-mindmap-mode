@@ -54,8 +54,7 @@ export interface MapController {
 
 	canDrop(id: string, targetId: string, mode: DropMode): boolean;
 	move(id: string, targetId: string, mode: DropMode): void;
-	/** Custom fork: free left/right placement in balanced layout. */
-	isBalanced(): boolean;
+	/** Custom fork: free left/right placement, in every layout. */
 	canDropOnSide(id: string, rootId: string): boolean;
 	moveToSide(id: string, side: SideSign, index: number, rootId: string): void;
 	/** Custom fork: with several maps on the canvas, a map's root drags its whole map. */
@@ -303,7 +302,6 @@ export function attachInteractions(controller: MapController): () => void {
 	 * the side is empty) so the drop says where it lands.
 	 */
 	const sideHit = (dragged: string, x: number, y: number): DropHit | null => {
-		if (!controller.isBalanced()) return null;
 		// Custom fork: every map's root has its own two sides; the nearest root
 		// whose first-level column holds the pointer wins.
 		let best: { hit: DropHit; distance: number } | null = null;

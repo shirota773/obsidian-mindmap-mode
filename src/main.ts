@@ -1,4 +1,5 @@
 import { Notice, Plugin, TFile, TFolder, debounce, setIcon } from "obsidian";
+import { MINDMAP_ICON, registerMindmapIcon } from "./icon.ts";
 import type { ViewState, WorkspaceLeaf } from "obsidian";
 
 import { MINDMAP_VIEW_TYPE, MindmapView } from "./view/MindmapView.ts";
@@ -72,7 +73,8 @@ export default class MindmapPlugin extends Plugin {
 
 		this.addSettingTab(new MindmapSettingTab(this.app, this));
 
-		this.addRibbonIcon("git-fork", "Toggle mind map view", () => {
+		registerMindmapIcon();
+		this.addRibbonIcon(MINDMAP_ICON, "Toggle mind map view", () => {
 			const leaf = this.app.workspace.getMostRecentLeaf();
 			if (leaf) void this.toggleLeaf(leaf);
 		});
@@ -198,7 +200,7 @@ export default class MindmapPlugin extends Plugin {
 				menu.addItem((item) =>
 					item
 						.setTitle(isMap ? "Edit as markdown" : "Open as mind map")
-						.setIcon(isMap ? "file-text" : "git-fork")
+						.setIcon(isMap ? "file-text" : MINDMAP_ICON)
 						.onClick(() => {
 							if (leaf) void this.toggleLeaf(leaf);
 							else void this.openFileAsMindmap(file);
@@ -447,7 +449,7 @@ export default class MindmapPlugin extends Plugin {
 			cls: `clickable-icon view-action ${HEADER_BUTTON_CLASS}`,
 			attr: { "aria-label": "Open as mind map" },
 		});
-		setIcon(button, "git-fork");
+		setIcon(button, MINDMAP_ICON);
 		button.addEventListener("click", (ev) => {
 			ev.preventDefault();
 			void this.toggleLeaf(leaf);

@@ -220,14 +220,14 @@ const GROUPS: SettingGroup[] = [
 		heading: "Appearance",
 		items: [
 			{
-				name: "Layout",
-				desc: "Balanced splits top-level branches to both sides of the root.",
+				name: "Default placement",
+				desc: "Where top-level branches go until you drag one across the root. Dragging a branch to either side always works, and is remembered per map.",
 				control: {
 					type: "dropdown",
 					key: "layout",
 					options: {
-						balanced: "Balanced (both sides)",
-						right: "Single side (right)",
+						balanced: "Both sides (split by size)",
+						right: "All on the right",
 					},
 				},
 			},
